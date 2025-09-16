@@ -12,17 +12,43 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Validate webhook secret if provided
-        const webhookSecret = process.env.WEBHOOK_SECRET;
-        if (webhookSecret && data.webhookSecret !== webhookSecret) {
-            return NextResponse.json(
-                { success: false, error: "Invalid webhook secret" },
-                { status: 401 }
-            );
+        // Validate reCAPTCHA if configured
+        const recaptchaSecretKey = process.env.RECAPTCHA_SECRET_KEY;
+        if (recaptchaSecretKey && data.recaptchaToken) {
+            try {
+                const recaptchaResponse = await fetch(
+                    "https://www.google.com/recaptcha/api/siteverify",
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded",
+                        },
+                        body: `secret=${recaptchaSecretKey}&response=${data.recaptchaToken}`,
+                    }
+                );
+
+                const recaptchaResult = await recaptchaResponse.json();
+
+                if (!recaptchaResult.success) {
+                    return NextResponse.json(
+                        {
+                            success: false,
+                            error: "reCAPTCHA verification failed",
+                        },
+                        { status: 401 }
+                    );
+                }
+            } catch (error) {
+                console.error("reCAPTCHA verification error:", error);
+                return NextResponse.json(
+                    { success: false, error: "reCAPTCHA verification failed" },
+                    { status: 401 }
+                );
+            }
         }
 
-        // Sanitize data for Google Sheets
-        const sanitizedData = { ...data };
+        // Sanitize data for Google Sheets (exclude recaptcha token)
+        const { recaptchaToken, ...sanitizedData } = data;
 
         // Convert phone number to string and prefix with single quote to prevent formula interpretation
         if (sanitizedData.phone) {
