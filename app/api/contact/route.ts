@@ -48,7 +48,8 @@ export async function POST(request: NextRequest) {
         }
 
         // Sanitize data for Google Sheets (exclude recaptcha token)
-        const { recaptchaToken, ...sanitizedData } = data;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { recaptchaToken: _recaptchaToken, ...sanitizedData } = data;
 
         // Convert phone number to string and prefix with single quote to prevent formula interpretation
         if (sanitizedData.phone) {
@@ -111,7 +112,8 @@ export async function POST(request: NextRequest) {
 }
 
 // Handle preflight requests
-export async function OPTIONS(request: NextRequest) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function OPTIONS(_request: NextRequest) {
     return new NextResponse(null, {
         status: 200,
         headers: {
