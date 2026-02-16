@@ -12,39 +12,61 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Validate reCAPTCHA if configured
-        const recaptchaSecretKey = process.env.RECAPTCHA_SECRET_KEY;
-        if (recaptchaSecretKey && data.recaptchaToken) {
-            try {
-                const recaptchaResponse = await fetch(
-                    "https://www.google.com/recaptcha/api/siteverify",
-                    {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/x-www-form-urlencoded",
-                        },
-                        body: `secret=${recaptchaSecretKey}&response=${data.recaptchaToken}`,
-                    }
-                );
+        // Validate reCAPTCHA (fail-closed to block bot submissions)
+        const recaptchaSecretKey = process.env.RECAPTCHA_SECRET_KEY?.trim();
+        if (!recaptchaSecretKey) {
+            return NextResponse.json(
+                { success: false, error: "reCAPTCHA is not configured" },
+                { status: 503 }
+            );
+        }
 
-                const recaptchaResult = await recaptchaResponse.json();
+        const normalizedRecaptchaToken =
+            typeof data.recaptchaToken === "string" ? data.recaptchaToken.trim() : "";
+        if (!normalizedRecaptchaToken) {
+            return NextResponse.json(
+                { success: false, error: "reCAPTCHA token is required" },
+                { status: 400 }
+            );
+        }
 
-                if (!recaptchaResult.success) {
-                    return NextResponse.json(
-                        {
-                            success: false,
-                            error: "reCAPTCHA verification failed",
-                        },
-                        { status: 401 }
-                    );
+        let captchaStatus: "Verified" | "Not verified" = "Not verified";
+        try {
+            const verifyParams = new URLSearchParams({
+                secret: recaptchaSecretKey,
+                response: normalizedRecaptchaToken,
+            });
+
+            const recaptchaResponse = await fetch(
+                "https://www.google.com/recaptcha/api/siteverify",
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    body: verifyParams.toString(),
                 }
-            } catch (error) {
-                console.error("reCAPTCHA verification error:", error);
+            );
+
+            const recaptchaResult = await recaptchaResponse.json();
+
+            if (!recaptchaResult.success) {
                 return NextResponse.json(
-                    { success: false, error: "reCAPTCHA verification failed" },
-                    { status: 401 }
+                    {
+                        success: false,
+                        error: "reCAPTCHA verification failed",
+                    },
+                    { status: 403 }
                 );
             }
+
+            captchaStatus = "Verified";
+        } catch (error) {
+            console.error("reCAPTCHA verification error:", error);
+            return NextResponse.json(
+                { success: false, error: "reCAPTCHA verification unavailable" },
+                { status: 503 }
+            );
         }
 
         // Sanitize data for Google Sheets (exclude recaptcha token)
@@ -59,9 +81,20 @@ export async function POST(request: NextRequest) {
 
         // Call Google Apps Script
         const googleScriptUrl = process.env.GOOGLE_SCRIPT_URL;
+        const googleScriptWebhookSecret =
+            process.env.GOOGLE_SCRIPT_WEBHOOK_SECRET?.trim();
         if (!googleScriptUrl) {
             return NextResponse.json(
                 { success: false, error: "Google Script URL not configured" },
+                { status: 500 }
+            );
+        }
+        if (!googleScriptWebhookSecret) {
+            return NextResponse.json(
+                {
+                    success: false,
+                    error: "Google Script webhook secret not configured",
+                },
                 { status: 500 }
             );
         }
@@ -73,6 +106,8 @@ export async function POST(request: NextRequest) {
             },
             body: JSON.stringify({
                 ...sanitizedData,
+                captcha: captchaStatus,
+                webhookSecret: googleScriptWebhookSecret,
                 timestamp: new Date().toISOString(),
             }),
         });

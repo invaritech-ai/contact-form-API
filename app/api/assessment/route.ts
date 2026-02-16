@@ -164,54 +164,58 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // --- reCAPTCHA verification ---
-        const recaptchaSecretKey = process.env.RECAPTCHA_SECRET_KEY;
-        if (recaptchaSecretKey) {
-            const normalizedRecaptchaToken =
-                typeof recaptchaToken === "string" ? recaptchaToken.trim() : "";
+        // --- reCAPTCHA verification (fail-closed to prevent bot submissions) ---
+        const recaptchaSecretKey = process.env.RECAPTCHA_SECRET_KEY?.trim();
+        if (!recaptchaSecretKey) {
+            return jsonResponse(
+                { success: false, error: "reCAPTCHA is not configured" },
+                503
+            );
+        }
 
-            // Token is required when the secret key is configured
-            if (!normalizedRecaptchaToken) {
-                return jsonResponse(
-                    { success: false, error: "reCAPTCHA token is required" },
-                    400
-                );
-            }
+        const normalizedRecaptchaToken =
+            typeof recaptchaToken === "string" ? recaptchaToken.trim() : "";
+        if (!normalizedRecaptchaToken) {
+            return jsonResponse(
+                { success: false, error: "reCAPTCHA token is required" },
+                400
+            );
+        }
 
-            try {
-                const verifyParams = new URLSearchParams({
-                    secret: recaptchaSecretKey,
-                    response: normalizedRecaptchaToken,
-                });
+        let captchaStatus: "Verified" | "Not verified" = "Not verified";
+        try {
+            const verifyParams = new URLSearchParams({
+                secret: recaptchaSecretKey,
+                response: normalizedRecaptchaToken,
+            });
 
-                const recaptchaResponse = await fetch(
-                    "https://www.google.com/recaptcha/api/siteverify",
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                        body: verifyParams.toString(),
-                    }
-                );
-                const recaptchaResult = await recaptchaResponse.json();
-                if (!recaptchaResult.success) {
-                    return jsonResponse(
-                        { success: false, error: "reCAPTCHA verification failed" },
-                        403
-                    );
+            const recaptchaResponse = await fetch(
+                "https://www.google.com/recaptcha/api/siteverify",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: verifyParams.toString(),
                 }
-            } catch (error) {
-                console.error("reCAPTCHA verification error:", error);
-                // Fail closed: reject the request if we can't verify
+            );
+            const recaptchaResult = await recaptchaResponse.json();
+            if (!recaptchaResult.success) {
                 return jsonResponse(
-                    { success: false, error: "reCAPTCHA verification unavailable" },
-                    503
+                    { success: false, error: "reCAPTCHA verification failed" },
+                    403
                 );
             }
+            captchaStatus = "Verified";
+        } catch (error) {
+            console.error("reCAPTCHA verification error:", error);
+            return jsonResponse(
+                { success: false, error: "reCAPTCHA verification unavailable" },
+                503
+            );
         }
 
         // Recalculate server-side so scores cannot be tampered with by the client.
         const result = calculateAssessmentScore(inputs);
-        saveLeadToGoogleSheets(inputs, leadData, result);
+        saveLeadToGoogleSheets(inputs, leadData, result, captchaStatus);
 
         let mergedResult: AssessmentResult = result;
         const openRouterClient = createOpenRouterClient();
@@ -406,10 +410,19 @@ function isAssessmentInputs(value: unknown): value is AssessmentInputs {
 function saveLeadToGoogleSheets(
     inputs: AssessmentInputs,
     leadData: LeadData,
-    result: AssessmentResult
+    result: AssessmentResult,
+    captchaStatus: "Verified" | "Not verified"
 ) {
     const googleScriptUrl = process.env.GOOGLE_SCRIPT_URL;
+    const googleScriptWebhookSecret =
+        process.env.GOOGLE_SCRIPT_WEBHOOK_SECRET?.trim();
     if (!googleScriptUrl) {
+        return;
+    }
+    if (!googleScriptWebhookSecret) {
+        console.error(
+            "GOOGLE_SCRIPT_WEBHOOK_SECRET is not configured; skipping assessment lead save"
+        );
         return;
     }
 
@@ -432,6 +445,8 @@ function saveLeadToGoogleSheets(
     const payload = {
         ...normalizedLeadData,
         message: assessmentSummary,
+        captcha: captchaStatus,
+        webhookSecret: googleScriptWebhookSecret,
         timestamp: new Date().toISOString(),
         archetype: result.archetype,
         archetypeTitle: result.archetypeTitle,
