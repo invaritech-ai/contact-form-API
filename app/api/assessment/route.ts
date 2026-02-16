@@ -16,6 +16,8 @@ const CORS_HEADERS = {
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini";
 const OPENROUTER_TIMEOUT_MS = 12_000; // 12s timeout for LLM call
+const MAX_COMPANY_NAME_LENGTH = 64;
+const COMPANY_PLACEHOLDER = "the company";
 
 // --- Lead data constraints ---
 const MAX_LEAD_FIELDS = 10;
@@ -51,8 +53,11 @@ export async function POST(request: NextRequest) {
         // --- reCAPTCHA verification ---
         const recaptchaSecretKey = process.env.RECAPTCHA_SECRET_KEY;
         if (recaptchaSecretKey) {
+            const normalizedRecaptchaToken =
+                typeof recaptchaToken === "string" ? recaptchaToken.trim() : "";
+
             // Token is required when the secret key is configured
-            if (typeof recaptchaToken !== "string" || !recaptchaToken.trim()) {
+            if (!normalizedRecaptchaToken) {
                 return jsonResponse(
                     { success: false, error: "reCAPTCHA token is required" },
                     400
@@ -62,7 +67,7 @@ export async function POST(request: NextRequest) {
             try {
                 const verifyParams = new URLSearchParams({
                     secret: recaptchaSecretKey,
-                    response: recaptchaToken,
+                    response: normalizedRecaptchaToken,
                 });
 
                 const recaptchaResponse = await fetch(
@@ -186,8 +191,24 @@ function saveLeadToGoogleSheets(
     }
 
     const normalizedLeadData = normalizeLeadData(leadData);
+    const assessmentSummary = [
+        `Target Function: ${formatLabel(inputs.functionFocus)}`,
+        `Primary Goal: ${formatLabel(inputs.primaryWorkflowGoal)}`,
+        `Company Size: ${inputs.companySize}`,
+        `Volume: ${inputs.monthlyVolumeBand}`,
+        `AHT: ${inputs.currentAHTBand}`,
+        `Data Structure: ${inputs.dataStructure}`,
+        `Process Maturity: ${inputs.processMaturity}`,
+        `Data Readiness: ${inputs.dataAccessReadiness}`,
+        `Tooling: ${inputs.tooling.join(", ")}`,
+        `---`,
+        `Archetype: ${result.archetypeTitle}`,
+        `Scores - Viability: ${result.viabilityScore}, Readiness: ${result.readinessScore}, Risk: ${result.riskScore}`
+    ].join("\n");
+
     const payload = {
         ...normalizedLeadData,
+        message: assessmentSummary,
         timestamp: new Date().toISOString(),
         archetype: result.archetype,
         archetypeTitle: result.archetypeTitle,
@@ -263,22 +284,39 @@ function createOpenRouterClient(): OpenAI | null {
  * instruction-like tokens to mitigate prompt injection.
  */
 function sanitizeCompanyName(raw: unknown): string {
-    if (typeof raw !== "string") return "the company";
-
-    let name = raw
-        .trim()
-        .slice(0, 64)
-        // Strip control characters (U+0000–U+001F, U+007F–U+009F)
-        .replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
-
-    // Strip instruction-like patterns
-    const suspiciousPatterns = /^\s*(ignore|return|stop|forget|system|assistant|you are|<\/?[a-z])/i;
-    if (suspiciousPatterns.test(name) || name.includes("```") || name.includes("{") || name.includes("}")) {
-        return "the company";
+    if (typeof raw !== "string") {
+        return COMPANY_PLACEHOLDER;
     }
 
-    name = name.trim();
-    return name.length > 0 ? name : "the company";
+    const name = raw
+        .normalize("NFKC")
+        // Strip control characters (U+0000-U+001F, U+007F-U+009F)
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, MAX_COMPANY_NAME_LENGTH)
+        .trim();
+
+    if (!name || hasSuspiciousPromptTokens(name)) {
+        return COMPANY_PLACEHOLDER;
+    }
+
+    return name;
+}
+
+function hasSuspiciousPromptTokens(value: string): boolean {
+    // Instruction-like prefixes that often indicate prompt injection.
+    if (/^(ignore|return|stop|forget|system|assistant|developer|instruction|prompt)\b/i.test(value)) {
+        return true;
+    }
+
+    // Embedded JSON/code/command-like patterns.
+    return (
+        /```/.test(value) ||
+        /[{[]\s*["'][^"']+["']\s*:/.test(value) ||
+        /<\/?(system|assistant|user|tool|script)\b/i.test(value) ||
+        /(\|\||&&|;\s*(rm|curl|wget|bash|sh|python|node)\b|\$\(|`)/i.test(value)
+    );
 }
 
 async function generateAIInsights(
