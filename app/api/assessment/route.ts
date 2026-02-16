@@ -16,6 +16,7 @@ const CORS_HEADERS = {
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini";
 const OPENROUTER_TIMEOUT_MS = 12_000; // 12s timeout for LLM call
+const MAX_ENUM_INPUT_LENGTH = 64;
 const MAX_COMPANY_NAME_LENGTH = 64;
 const COMPANY_PLACEHOLDER = "the company";
 
@@ -25,6 +26,119 @@ const MAX_LEAD_VALUE_LENGTH = 500;
 const ALLOWED_LEAD_FIELDS = new Set([
     "name", "email", "company", "phone", "country", "source",
 ]);
+const MAX_TOOLING_ITEMS = 10;
+
+const ALLOWED_COMPANY_SIZES = [
+    "50-200",
+    "200-500",
+    "500-1000",
+    "1000-2000",
+    "2000+",
+] as const;
+const ALLOWED_FUNCTION_FOCUS = [
+    "customer-support",
+    "sales",
+    "operations",
+    "marketing",
+    "finance",
+    "legal",
+    "health-fitness",
+    "hr",
+    "it",
+    "product",
+    "engineering",
+    "analytics",
+] as const;
+const ALLOWED_PRIMARY_WORKFLOW_GOALS = [
+    "knowledge",
+    "drafting",
+    "intake",
+    "finance",
+    "lead-qualification",
+    "client-onboarding",
+    "scheduling",
+    "reporting",
+    "content-generation",
+] as const;
+const ALLOWED_MONTHLY_VOLUME_BANDS = [
+    "100-500",
+    "500-1000",
+    "1000-2000",
+    "2000-5000",
+    "5000+",
+] as const;
+const ALLOWED_CURRENT_AHT_BANDS = [
+    "<1 min",
+    "1-3 min",
+    "3-5 min",
+    "5+ min",
+] as const;
+const ALLOWED_ERROR_TOLERANCES = [
+    "minimal",
+    "rework",
+    "critical",
+] as const;
+const ALLOWED_DATA_ACCESS_READINESS = [
+    "minimal",
+    "synthetic",
+    "blocked",
+] as const;
+const ALLOWED_PROCESS_MATURITY = [
+    "documented",
+    "partial",
+    "tribal",
+] as const;
+const ALLOWED_DATA_STRUCTURES = [
+    "structured",
+    "semi",
+    "unstructured",
+    "scattered",
+] as const;
+const ALLOWED_SPONSOR_READINESS = [
+    "yes",
+    "partial",
+    "no",
+] as const;
+const ALLOWED_BUDGET_FITS = [
+    "<$10k",
+    "$10-25k",
+    "≥$25k",
+] as const;
+const ALLOWED_TOOLING = [
+    "salesforce",
+    "hubspot",
+    "slack",
+    "teams",
+    "zendesk",
+    "intercom",
+    "notion",
+    "airtable",
+    "jira",
+    "asana",
+    "google-workspace",
+    "microsoft-365",
+    "zapier",
+    "make",
+    "n8n",
+    "shopify",
+    "stripe",
+    "quickbooks",
+    "netsuite",
+    "none",
+] as const;
+
+const COMPANY_SIZE_LOOKUP = createEnumLookup(ALLOWED_COMPANY_SIZES);
+const FUNCTION_FOCUS_LOOKUP = createEnumLookup(ALLOWED_FUNCTION_FOCUS);
+const PRIMARY_WORKFLOW_GOAL_LOOKUP = createEnumLookup(ALLOWED_PRIMARY_WORKFLOW_GOALS);
+const MONTHLY_VOLUME_BAND_LOOKUP = createEnumLookup(ALLOWED_MONTHLY_VOLUME_BANDS);
+const CURRENT_AHT_BAND_LOOKUP = createEnumLookup(ALLOWED_CURRENT_AHT_BANDS);
+const ERROR_TOLERANCE_LOOKUP = createEnumLookup(ALLOWED_ERROR_TOLERANCES);
+const DATA_ACCESS_READINESS_LOOKUP = createEnumLookup(ALLOWED_DATA_ACCESS_READINESS);
+const PROCESS_MATURITY_LOOKUP = createEnumLookup(ALLOWED_PROCESS_MATURITY);
+const DATA_STRUCTURE_LOOKUP = createEnumLookup(ALLOWED_DATA_STRUCTURES);
+const SPONSOR_READINESS_LOOKUP = createEnumLookup(ALLOWED_SPONSOR_READINESS);
+const BUDGET_FIT_LOOKUP = createEnumLookup(ALLOWED_BUDGET_FITS);
+const TOOLING_LOOKUP = createEnumLookup(ALLOWED_TOOLING);
 
 type LeadData = Record<string, unknown>;
 type AssessmentInsights = Pick<
@@ -150,34 +264,143 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function createEnumLookup(
+    values: readonly string[]
+): Map<string, string> {
+    return new Map(values.map((value) => [value.toLowerCase(), value]));
+}
+
+function sanitizeInputText(raw: unknown, maxLength: number): string {
+    if (typeof raw !== "string") {
+        return "";
+    }
+
+    return raw
+        .normalize("NFKC")
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, maxLength)
+        .trim();
+}
+
+function normalizeEnumValue(
+    raw: unknown,
+    lookup: ReadonlyMap<string, string>,
+    options: { slugStyle?: boolean } = {}
+): string | null {
+    const sanitized = sanitizeInputText(raw, MAX_ENUM_INPUT_LENGTH);
+    if (!sanitized) {
+        return null;
+    }
+
+    const lookupKey = options.slugStyle
+        ? sanitized.toLowerCase().replace(/[_\s]+/g, "-")
+        : sanitized.toLowerCase();
+
+    return lookup.get(lookupKey) ?? null;
+}
+
+function normalizeToolingItems(raw: unknown): string[] | null {
+    if (!Array.isArray(raw)) {
+        return null;
+    }
+
+    const normalized = new Set<string>();
+    for (const item of raw) {
+        const normalizedItem = normalizeEnumValue(item, TOOLING_LOOKUP, {
+            slugStyle: true,
+        });
+
+        // Unexpected tooling values are dropped to avoid prompt injection.
+        if (!normalizedItem) {
+            continue;
+        }
+
+        normalized.add(normalizedItem);
+        if (normalized.size >= MAX_TOOLING_ITEMS) {
+            break;
+        }
+    }
+
+    return Array.from(normalized);
+}
+
 function isAssessmentInputs(value: unknown): value is AssessmentInputs {
     if (!isRecord(value)) {
         return false;
     }
 
-    const requiredStringFields = [
-        "companySize",
-        "functionFocus",
-        "primaryWorkflowGoal",
-        "monthlyVolumeBand",
-        "currentAHTBand",
-        "errorTolerance",
-        "dataAccessReadiness",
-        "processMaturity",
-        "dataStructure",
-        "sponsorReady",
-        "budgetFit",
-    ];
-
-    const hasRequiredStrings = requiredStringFields.every(
-        (field) => typeof value[field] === "string"
+    const companySize = normalizeEnumValue(value.companySize, COMPANY_SIZE_LOOKUP);
+    const functionFocus = normalizeEnumValue(value.functionFocus, FUNCTION_FOCUS_LOOKUP, {
+        slugStyle: true,
+    });
+    const primaryWorkflowGoal = normalizeEnumValue(
+        value.primaryWorkflowGoal,
+        PRIMARY_WORKFLOW_GOAL_LOOKUP,
+        { slugStyle: true }
     );
-
-    return (
-        hasRequiredStrings &&
-        Array.isArray(value.tooling) &&
-        value.tooling.every((item) => typeof item === "string")
+    const monthlyVolumeBand = normalizeEnumValue(
+        value.monthlyVolumeBand,
+        MONTHLY_VOLUME_BAND_LOOKUP
     );
+    const currentAHTBand = normalizeEnumValue(
+        value.currentAHTBand,
+        CURRENT_AHT_BAND_LOOKUP
+    );
+    const errorTolerance = normalizeEnumValue(value.errorTolerance, ERROR_TOLERANCE_LOOKUP, {
+        slugStyle: true,
+    });
+    const dataAccessReadiness = normalizeEnumValue(
+        value.dataAccessReadiness,
+        DATA_ACCESS_READINESS_LOOKUP,
+        { slugStyle: true }
+    );
+    const processMaturity = normalizeEnumValue(value.processMaturity, PROCESS_MATURITY_LOOKUP, {
+        slugStyle: true,
+    });
+    const dataStructure = normalizeEnumValue(value.dataStructure, DATA_STRUCTURE_LOOKUP, {
+        slugStyle: true,
+    });
+    const sponsorReady = normalizeEnumValue(value.sponsorReady, SPONSOR_READINESS_LOOKUP, {
+        slugStyle: true,
+    });
+    const budgetFit = normalizeEnumValue(value.budgetFit, BUDGET_FIT_LOOKUP);
+    const tooling = normalizeToolingItems(value.tooling);
+
+    if (
+        !companySize ||
+        !functionFocus ||
+        !primaryWorkflowGoal ||
+        !monthlyVolumeBand ||
+        !currentAHTBand ||
+        !errorTolerance ||
+        !dataAccessReadiness ||
+        !processMaturity ||
+        !dataStructure ||
+        !sponsorReady ||
+        !budgetFit ||
+        tooling === null
+    ) {
+        return false;
+    }
+
+    Object.assign(value, {
+        companySize,
+        functionFocus,
+        primaryWorkflowGoal,
+        monthlyVolumeBand,
+        currentAHTBand,
+        errorTolerance,
+        dataAccessReadiness,
+        processMaturity,
+        dataStructure,
+        sponsorReady,
+        budgetFit,
+        tooling,
+    } satisfies AssessmentInputs);
+
+    return true;
 }
 
 function saveLeadToGoogleSheets(
@@ -284,18 +507,7 @@ function createOpenRouterClient(): OpenAI | null {
  * instruction-like tokens to mitigate prompt injection.
  */
 function sanitizeCompanyName(raw: unknown): string {
-    if (typeof raw !== "string") {
-        return COMPANY_PLACEHOLDER;
-    }
-
-    const name = raw
-        .normalize("NFKC")
-        // Strip control characters (U+0000-U+001F, U+007F-U+009F)
-        .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, MAX_COMPANY_NAME_LENGTH)
-        .trim();
+    const name = sanitizeInputText(raw, MAX_COMPANY_NAME_LENGTH);
 
     if (!name || hasSuspiciousPromptTokens(name)) {
         return COMPANY_PLACEHOLDER;
@@ -327,18 +539,29 @@ async function generateAIInsights(
 ): Promise<AssessmentInsights | null> {
     try {
         const company = sanitizeCompanyName(leadData.company);
+        const companySize = inputs.companySize;
+        const functionFocus = formatLabel(inputs.functionFocus);
+        const primaryWorkflowGoal = formatLabel(inputs.primaryWorkflowGoal);
+        const monthlyVolumeBand = inputs.monthlyVolumeBand;
+        const currentAHTBand = inputs.currentAHTBand;
+        const processMaturity = formatLabel(inputs.processMaturity);
+        const dataStructure = formatLabel(inputs.dataStructure);
+        const dataAccessReadiness = formatLabel(inputs.dataAccessReadiness);
+        const tooling = inputs.tooling.length > 0
+            ? inputs.tooling.map((item) => formatLabel(item)).join(", ")
+            : "None listed";
 
         const prompt = `
 Company: ${company}
-Size: ${inputs.companySize}
-Function: ${formatLabel(inputs.functionFocus)}
-Goal: ${formatLabel(inputs.primaryWorkflowGoal)}
-Volume: ${inputs.monthlyVolumeBand}
-AHT: ${inputs.currentAHTBand}
-Process maturity: ${inputs.processMaturity}
-Data structure: ${inputs.dataStructure}
-Data access readiness: ${inputs.dataAccessReadiness}
-Tooling: ${inputs.tooling.length > 0 ? inputs.tooling.join(", ") : "None listed"}
+Size: ${companySize}
+Function: ${functionFocus}
+Goal: ${primaryWorkflowGoal}
+Volume: ${monthlyVolumeBand}
+AHT: ${currentAHTBand}
+Process maturity: ${processMaturity}
+Data structure: ${dataStructure}
+Data access readiness: ${dataAccessReadiness}
+Tooling: ${tooling}
 
 Scores:
 - Viability: ${result.viabilityScore}/100
