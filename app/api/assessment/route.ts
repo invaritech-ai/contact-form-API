@@ -31,12 +31,37 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { inputs, leadData } = body;
+        const { inputs, leadData, recaptchaToken } = body;
         if (!isAssessmentInputs(inputs) || !isRecord(leadData)) {
             return jsonResponse(
                 { success: false, error: "Missing or invalid required fields" },
                 400
             );
+        }
+
+        // Verify reCAPTCHA if configured
+        const recaptchaSecretKey = process.env.RECAPTCHA_SECRET_KEY;
+        if (recaptchaSecretKey && recaptchaToken) {
+            try {
+                const recaptchaResponse = await fetch(
+                    "https://www.google.com/recaptcha/api/siteverify",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                        body: `secret=${recaptchaSecretKey}&response=${recaptchaToken}`,
+                    }
+                );
+                const recaptchaResult = await recaptchaResponse.json();
+                if (!recaptchaResult.success) {
+                    return jsonResponse(
+                        { success: false, error: "reCAPTCHA verification failed" },
+                        403
+                    );
+                }
+            } catch (error) {
+                console.error("reCAPTCHA verification error:", error);
+                // Continue without blocking if verification service is down
+            }
         }
 
         // Recalculate server-side so scores cannot be tampered with by the client.
