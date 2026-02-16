@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
 import {
     calculateAssessmentScore,
+    formatLabel,
     type AssessmentInputs,
     type AssessmentResult,
 } from "@/lib/assessment-calculator";
@@ -14,6 +15,14 @@ const CORS_HEADERS = {
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini";
+const OPENROUTER_TIMEOUT_MS = 12_000; // 12s timeout for LLM call
+
+// --- Lead data constraints ---
+const MAX_LEAD_FIELDS = 10;
+const MAX_LEAD_VALUE_LENGTH = 500;
+const ALLOWED_LEAD_FIELDS = new Set([
+    "name", "email", "company", "phone", "country", "source",
+]);
 
 type LeadData = Record<string, unknown>;
 type AssessmentInsights = Pick<
@@ -39,16 +48,29 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Verify reCAPTCHA if configured
+        // --- reCAPTCHA verification ---
         const recaptchaSecretKey = process.env.RECAPTCHA_SECRET_KEY;
-        if (recaptchaSecretKey && recaptchaToken) {
+        if (recaptchaSecretKey) {
+            // Token is required when the secret key is configured
+            if (typeof recaptchaToken !== "string" || !recaptchaToken.trim()) {
+                return jsonResponse(
+                    { success: false, error: "reCAPTCHA token is required" },
+                    400
+                );
+            }
+
             try {
+                const verifyParams = new URLSearchParams({
+                    secret: recaptchaSecretKey,
+                    response: recaptchaToken,
+                });
+
                 const recaptchaResponse = await fetch(
                     "https://www.google.com/recaptcha/api/siteverify",
                     {
                         method: "POST",
                         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                        body: `secret=${recaptchaSecretKey}&response=${recaptchaToken}`,
+                        body: verifyParams.toString(),
                     }
                 );
                 const recaptchaResult = await recaptchaResponse.json();
@@ -60,7 +82,11 @@ export async function POST(request: NextRequest) {
                 }
             } catch (error) {
                 console.error("reCAPTCHA verification error:", error);
-                // Continue without blocking if verification service is down
+                // Fail closed: reject the request if we can't verify
+                return jsonResponse(
+                    { success: false, error: "reCAPTCHA verification unavailable" },
+                    503
+                );
             }
         }
 
@@ -183,18 +209,26 @@ function saveLeadToGoogleSheets(
     });
 }
 
+/**
+ * Normalizes lead data with field allowlist and size constraints
+ * to prevent payload bloat from malicious clients.
+ */
 function normalizeLeadData(
     leadData: LeadData
 ): Record<string, string | number | boolean> {
     const normalized: Record<string, string | number | boolean> = {};
+    let fieldCount = 0;
 
     for (const [key, value] of Object.entries(leadData)) {
-        if (
-            typeof value === "string" ||
-            typeof value === "number" ||
-            typeof value === "boolean"
-        ) {
+        if (fieldCount >= MAX_LEAD_FIELDS) break;
+        if (!ALLOWED_LEAD_FIELDS.has(key)) continue;
+
+        if (typeof value === "string") {
+            normalized[key] = value.slice(0, MAX_LEAD_VALUE_LENGTH);
+            fieldCount++;
+        } else if (typeof value === "number" || typeof value === "boolean") {
             normalized[key] = value;
+            fieldCount++;
         }
     }
 
@@ -219,7 +253,32 @@ function createOpenRouterClient(): OpenAI | null {
         apiKey,
         baseURL: OPENROUTER_BASE_URL,
         defaultHeaders,
+        timeout: OPENROUTER_TIMEOUT_MS,
     });
+}
+
+/**
+ * Sanitizes a company name for safe LLM prompt inclusion.
+ * Trims, truncates to 64 chars, strips control characters and
+ * instruction-like tokens to mitigate prompt injection.
+ */
+function sanitizeCompanyName(raw: unknown): string {
+    if (typeof raw !== "string") return "the company";
+
+    let name = raw
+        .trim()
+        .slice(0, 64)
+        // Strip control characters (U+0000–U+001F, U+007F–U+009F)
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+
+    // Strip instruction-like patterns
+    const suspiciousPatterns = /^\s*(ignore|return|stop|forget|system|assistant|you are|<\/?[a-z])/i;
+    if (suspiciousPatterns.test(name) || name.includes("```") || name.includes("{") || name.includes("}")) {
+        return "the company";
+    }
+
+    name = name.trim();
+    return name.length > 0 ? name : "the company";
 }
 
 async function generateAIInsights(
@@ -229,10 +288,7 @@ async function generateAIInsights(
     result: AssessmentResult
 ): Promise<AssessmentInsights | null> {
     try {
-        const company =
-            typeof leadData.company === "string" && leadData.company.trim()
-                ? leadData.company.trim()
-                : "the company";
+        const company = sanitizeCompanyName(leadData.company);
 
         const prompt = `
 Company: ${company}
@@ -318,8 +374,4 @@ Scores:
         console.error("AI insight generation failed:", error);
         return null;
     }
-}
-
-function formatLabel(slug: string): string {
-    return slug.replace(/-/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
 }
