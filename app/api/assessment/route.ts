@@ -16,8 +16,10 @@ const CORS_HEADERS = {
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini";
 const OPENROUTER_TIMEOUT_MS = 12_000; // 12s timeout for LLM call
+const GOOGLE_SCRIPT_TIMEOUT_MS = 8_000;
 const MAX_ENUM_INPUT_LENGTH = 64;
 const MAX_COMPANY_NAME_LENGTH = 64;
+const MAX_STRATEGIC_ADVICE_LENGTH = 2_000;
 const COMPANY_PLACEHOLDER = "the company";
 
 // --- Lead data constraints ---
@@ -156,8 +158,9 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { inputs, leadData, recaptchaToken } = body;
-        if (!isAssessmentInputs(inputs) || !isRecord(leadData)) {
+        const { inputs: rawInputs, leadData, recaptchaToken } = body;
+        const inputs = normalizeAssessmentInputs(rawInputs);
+        if (!inputs || !isRecord(leadData)) {
             return jsonResponse(
                 { success: false, error: "Missing or invalid required fields" },
                 400
@@ -281,6 +284,7 @@ function sanitizeInputText(raw: unknown, maxLength: number): string {
 
     return raw
         .normalize("NFKC")
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: Intentionally stripping C0/C1 control characters
         .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
         .replace(/\s+/g, " ")
         .trim()
@@ -330,9 +334,9 @@ function normalizeToolingItems(raw: unknown): string[] | null {
     return Array.from(normalized);
 }
 
-function isAssessmentInputs(value: unknown): value is AssessmentInputs {
+function normalizeAssessmentInputs(value: unknown): AssessmentInputs | null {
     if (!isRecord(value)) {
-        return false;
+        return null;
     }
 
     const companySize = normalizeEnumValue(value.companySize, COMPANY_SIZE_LOOKUP);
@@ -386,10 +390,10 @@ function isAssessmentInputs(value: unknown): value is AssessmentInputs {
         !budgetFit ||
         tooling === null
     ) {
-        return false;
+        return null;
     }
 
-    Object.assign(value, {
+    return {
         companySize,
         functionFocus,
         primaryWorkflowGoal,
@@ -402,9 +406,7 @@ function isAssessmentInputs(value: unknown): value is AssessmentInputs {
         sponsorReady,
         budgetFit,
         tooling,
-    } satisfies AssessmentInputs);
-
-    return true;
+    };
 }
 
 function saveLeadToGoogleSheets(
@@ -463,6 +465,7 @@ function saveLeadToGoogleSheets(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(GOOGLE_SCRIPT_TIMEOUT_MS),
     }).catch((error: unknown) => {
         console.error("Assessment lead save failed:", error);
     });
@@ -540,7 +543,7 @@ function hasSuspiciousPromptTokens(value: string): boolean {
     // Embedded JSON/code/command-like patterns.
     return (
         /```/.test(value) ||
-        /[{[]\s*["'][^"']+["']\s*:/.test(value) ||
+        /[{\[]\s*["'][^"']+["']\s*:/.test(value) ||
         /<\/?(system|assistant|user|tool|script)\b/i.test(value) ||
         /(\|\||&&|;\s*(rm|curl|wget|bash|sh|python|node)\b|\$\(|`)/i.test(value)
     );
@@ -635,7 +638,9 @@ Scores:
             .filter(Boolean)
             .slice(0, 5);
 
-        const strategicAdvice = parsed.strategicAdvice.trim();
+        const strategicAdvice = parsed.strategicAdvice
+            .trim()
+            .slice(0, MAX_STRATEGIC_ADVICE_LENGTH);
 
         if (!strategicAdvice || reasoning.length === 0 || nextSteps.length === 0) {
             return null;

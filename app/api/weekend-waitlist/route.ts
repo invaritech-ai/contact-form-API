@@ -1,6 +1,24 @@
 import { google } from "googleapis";
 import { NextResponse } from "next/server";
 
+function sanitizeForSheetCell(value: unknown): string {
+    if (typeof value !== "string") {
+        return "";
+    }
+
+    const normalized = value
+        .normalize("NFKC")
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+        .trim();
+
+    if (!normalized) {
+        return "";
+    }
+
+    // Prefix formula-like values to force Google Sheets to treat them as text.
+    return /^[=+\-@]/.test(normalized) ? `'${normalized}` : normalized;
+}
+
 export async function POST(request: Request) {
     try {
         const body = await request.json();
@@ -102,16 +120,23 @@ export async function POST(request: Request) {
 
         // Prepare the row data
         const timestamp = new Date().toISOString();
+        const sanitizedName = sanitizeForSheetCell(name);
+        const sanitizedEmail = sanitizeForSheetCell(email);
+        const sanitizedWebsite = sanitizeForSheetCell(website);
+        const sanitizedWorkType = sanitizeForSheetCell(workType);
+        const sanitizedHeadache = sanitizeForSheetCell(headache);
+        const sanitizedMessage = sanitizeForSheetCell(message);
+        const sanitizedSource = sanitizeForSheetCell(source);
         const values = [
             [
                 timestamp,
-                name,
-                email,
-                website || "",
-                workType || "",
-                headache || "",
-                message || "",
-                source || "",
+                sanitizedName,
+                sanitizedEmail,
+                sanitizedWebsite,
+                sanitizedWorkType,
+                sanitizedHeadache,
+                sanitizedMessage,
+                sanitizedSource,
                 captchaStatus,
             ]
         ];

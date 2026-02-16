@@ -55,6 +55,15 @@ export interface AssessmentResult {
         max: number;
     };
 
+    // Metadata for breakdown
+    calculationBasis: {
+        monthlyVolume: number;
+        averageAHT: number;
+        efficiencyGain: number;
+        readinessFactor: number;
+        hourlyRate: number;
+    };
+
     // Feedback
     reasoning: string[];
     nextSteps: string[];
@@ -225,6 +234,21 @@ export function calculateAssessmentScore(
         readinessRaw += 0;
     }
 
+    // Sponsor Readiness (Max 5) - executive champion affects execution success
+    switch (inputs.sponsorReady) {
+        case "yes":
+            readinessRaw += 5;
+            reasoning.push("Executive sponsor significantly increases implementation success.");
+            break;
+        case "partial":
+            readinessRaw += 2;
+            break;
+        case "no":
+        default:
+            nextSteps.push("Identify an executive sponsor to champion the initiative.");
+            break;
+    }
+
     // Tooling specific feedback
     if (inputs.tooling.includes("salesforce") || inputs.tooling.includes("hubspot")) {
         reasoning.push("CRM integration enables direct pipeline automation.");
@@ -236,11 +260,11 @@ export function calculateAssessmentScore(
     const readinessScore = Math.min(readinessRaw, 100);
 
     // --- 3. Calculate Risk Score (Complexity/Safety) ---
-    // Factors: Error Tolerance, Data Structure, Workflow Goal 
-    // Start at 0, add risk.
-    let riskRaw = 0; 
+    // Factors: Error Tolerance, Data Structure, Workflow Goal
+    // Scaled to use full 0-100 range (max raw ~57 -> scale to 100).
+    let riskRaw = 0;
 
-    // Error Tolerance
+    // Error Tolerance (Max ~57 when scaled)
     switch (inputs.errorTolerance) {
         case "critical":
             riskRaw += 40; // High risk environment
@@ -276,7 +300,8 @@ export function calculateAssessmentScore(
         reasoning.push("Regulated or high-stakes domains require auditable AI reasoning logs.");
     }
 
-    const riskScore = Math.min(riskRaw, 100);
+    // Scale to 0-100: max raw = 70 (40+15+15), so multiply by 100/70
+    const riskScore = Math.min(100, Math.round((riskRaw / 70) * 100));
 
     // --- 4. Determine Archetype & Tier ---
 
@@ -326,10 +351,13 @@ export function calculateAssessmentScore(
     }
 
     // --- 5. Savings Calculations ---
-    const { min: minHours, max: maxHours, theoreticalMax } = calculateHoursSaved(inputs, readinessScore);
-    const projectedHoursSaved = { min: minHours, max: maxHours, theoreticalMax };
-
+    const volNum = getAverageVolume(inputs.monthlyVolumeBand);
+    const ahtNum = getAverageAHT(inputs.currentAHTBand);
+    const { savings: efficiencyGain } = getWorkflowSavingsParams(inputs.primaryWorkflowGoal);
     const hourlyRate = config.standardFteHourlyRate ?? 65;
+
+    const { min: minHours, max: maxHours, theoreticalMax, readinessFactor } = calculateHoursSaved(inputs, readinessScore);
+    const projectedHoursSaved = { min: minHours, max: maxHours, theoreticalMax };
     const projectedCostAvoided = calculateCostAvoidance(projectedHoursSaved, hourlyRate);
 
     // Filter reasoning/nextSteps to be unique and max 5 items
@@ -346,6 +374,13 @@ export function calculateAssessmentScore(
         archetypeDescription: description,
         projectedHoursSaved,
         projectedCostAvoided,
+        calculationBasis: {
+            monthlyVolume: volNum,
+            averageAHT: ahtNum,
+            efficiencyGain,
+            readinessFactor,
+            hourlyRate,
+        },
         reasoning: uniqueReasoning,
         nextSteps: uniqueNextSteps,
         strategicAdvice
@@ -357,7 +392,7 @@ export function calculateAssessmentScore(
 export function calculateHoursSaved(
     inputs: AssessmentInputs, 
     readinessScore: number
-): { min: number; max: number; theoreticalMax: number } {
+): { min: number; max: number; theoreticalMax: number; readinessFactor: number } {
     const volNum = getAverageVolume(inputs.monthlyVolumeBand);
     const ahtNum = getAverageAHT(inputs.currentAHTBand);
     const { savings, automationFriction } = getWorkflowSavingsParams(inputs.primaryWorkflowGoal);
@@ -370,16 +405,17 @@ export function calculateHoursSaved(
     const theoreticalMax = Math.round(baseHoursSaved);
 
     // Apply readiness discount
-    // If readiness is 50%, you might only capture 70% of the potential savings initially
-    // Formula: Cap at 100% readiness. Floor at 40% (even bad processes save something).
-    const readinessFactor = Math.max(0.4, Math.min(1, readinessScore / 100 + 0.2));
+    // Linear mapping: 0% readiness -> 40% capture, 100% readiness -> 100% capture.
+    // No plateau: every readiness point affects the factor.
+    const readinessFactor = 0.4 + (readinessScore / 100) * 0.6;
     
     baseHoursSaved = baseHoursSaved * readinessFactor;
 
-    // Min/max range
+    // Min/max range; cap max at theoreticalMax (uncertainty band cannot exceed perfect-readiness ceiling)
     const min = Math.round(baseHoursSaved * 0.85);
-    const max = Math.round(baseHoursSaved * 1.15);
-    return { min, max, theoreticalMax };
+    const uncappedMax = Math.round(baseHoursSaved * 1.15);
+    const max = Math.min(uncappedMax, theoreticalMax);
+    return { min, max, theoreticalMax, readinessFactor };
 }
 
 export function calculateCostAvoidance(

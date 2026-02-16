@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
     try {
-        const data = await request.json();
+        const data = await request.json().catch(() => null);
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
+            return NextResponse.json(
+                { success: false, error: "Invalid JSON payload" },
+                { status: 400 }
+            );
+        }
 
         // Validate required fields
         if (!data.name || !data.email) {
@@ -90,10 +96,11 @@ export async function POST(request: NextRequest) {
             );
         }
         if (!googleScriptWebhookSecret) {
+            console.error("Google Script webhook secret not configured");
             return NextResponse.json(
                 {
                     success: false,
-                    error: "Google Script webhook secret not configured",
+                    error: "Server configuration error",
                 },
                 { status: 500 }
             );
