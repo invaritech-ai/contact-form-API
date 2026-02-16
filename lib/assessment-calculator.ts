@@ -338,7 +338,8 @@ export function calculateAssessmentScore(
     // --- 5. Savings Calculations ---
     const volNum = getAverageVolume(inputs.monthlyVolumeBand);
     const ahtNum = getAverageAHT(inputs.currentAHTBand);
-    const { savings: efficiencyGain } = getWorkflowSavingsParams(inputs.primaryWorkflowGoal);
+    const { savings: rawEfficiency, automationFriction } = getWorkflowSavingsParams(inputs.primaryWorkflowGoal);
+    const efficiencyGain = rawEfficiency * (1 - automationFriction);
     const hourlyRate = config.standardFteHourlyRate ?? 65;
 
     const { min: minHours, max: maxHours, theoreticalMax, readinessFactor } = calculateHoursSaved(inputs, readinessScore);
