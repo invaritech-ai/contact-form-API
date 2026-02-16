@@ -62,6 +62,7 @@ export interface AssessmentResult {
         efficiencyGain: number;
         readinessFactor: number;
         hourlyRate: number;
+        functionFocus: string;
     };
 
     // Feedback
@@ -364,6 +365,7 @@ export function calculateAssessmentScore(
             efficiencyGain,
             readinessFactor,
             hourlyRate,
+            functionFocus: inputs.functionFocus,
         },
         reasoning: uniqueReasoning,
         nextSteps: uniqueNextSteps,
