@@ -234,21 +234,6 @@ export function calculateAssessmentScore(
         readinessRaw += 0;
     }
 
-    // Sponsor Readiness (Max 5) - executive champion affects execution success
-    switch (inputs.sponsorReady) {
-        case "yes":
-            readinessRaw += 5;
-            reasoning.push("Executive sponsor significantly increases implementation success.");
-            break;
-        case "partial":
-            readinessRaw += 2;
-            break;
-        case "no":
-        default:
-            nextSteps.push("Identify an executive sponsor to champion the initiative.");
-            break;
-    }
-
     // Tooling specific feedback
     if (inputs.tooling.includes("salesforce") || inputs.tooling.includes("hubspot")) {
         reasoning.push("CRM integration enables direct pipeline automation.");
@@ -260,11 +245,11 @@ export function calculateAssessmentScore(
     const readinessScore = Math.min(readinessRaw, 100);
 
     // --- 3. Calculate Risk Score (Complexity/Safety) ---
-    // Factors: Error Tolerance, Data Structure, Workflow Goal
-    // Scaled to use full 0-100 range (max raw ~57 -> scale to 100).
-    let riskRaw = 0;
+    // Factors: Error Tolerance, Data Structure, Workflow Goal 
+    // Start at 0, add risk.
+    let riskRaw = 0; 
 
-    // Error Tolerance (Max ~57 when scaled)
+    // Error Tolerance
     switch (inputs.errorTolerance) {
         case "critical":
             riskRaw += 40; // High risk environment
@@ -300,8 +285,7 @@ export function calculateAssessmentScore(
         reasoning.push("Regulated or high-stakes domains require auditable AI reasoning logs.");
     }
 
-    // Scale to 0-100: max raw = 70 (40+15+15), so multiply by 100/70
-    const riskScore = Math.min(100, Math.round((riskRaw / 70) * 100));
+    const riskScore = Math.min(riskRaw, 100);
 
     // --- 4. Determine Archetype & Tier ---
 
@@ -327,14 +311,14 @@ export function calculateAssessmentScore(
             strategicAdvice = `You have the perfect storm for automation: high volume, well-documented processes, and a tolerance for iteration. You are ready to deploy autonomous agents that can execute end-to-end tasks with minimal supervision, potentially unlocking 10x operational throughput.`;
             tier = "hot";
         }
-    } else if (viabilityScore > 60 && readinessScore <= 70) {
+    } else if (viabilityScore > 60 && readinessScore < 70) {
         // Worth doing, but not ready
         archetype = "foundation-builder";
         title = "The Foundation Builder";
         description = "High potential that needs infrastructure investment first.";
         strategicAdvice = `The ROI potential is clearly there, but your data or process maturity isn't quite ready for advanced AI agents yet. Jumping straight to code would be risky. The winning move is a 'Foundation Sprint'—formalizing your SOPs and data, then layering AI on top.`;
         tier = "warm";
-    } else if (viabilityScore > 60 && readinessScore > 70) {
+    } else if (viabilityScore > 60 && readinessScore >= 70) {
         // Ready, but maybe moderate ROI
         archetype = "opportunity-accelerator";
         title = "The Opportunity Accelerator";
@@ -405,16 +389,15 @@ export function calculateHoursSaved(
     const theoreticalMax = Math.round(baseHoursSaved);
 
     // Apply readiness discount
-    // Linear mapping: 0% readiness -> 40% capture, 100% readiness -> 100% capture.
-    // No plateau: every readiness point affects the factor.
-    const readinessFactor = 0.4 + (readinessScore / 100) * 0.6;
+    // If readiness is 50%, you might only capture 70% of the potential savings initially
+    // Formula: Cap at 100% readiness. Floor at 40% (even bad processes save something).
+    const readinessFactor = Math.max(0.4, Math.min(1, readinessScore / 100 + 0.2));
     
     baseHoursSaved = baseHoursSaved * readinessFactor;
 
-    // Min/max range; cap max at theoreticalMax (uncertainty band cannot exceed perfect-readiness ceiling)
+    // Min/max range
     const min = Math.round(baseHoursSaved * 0.85);
-    const uncappedMax = Math.round(baseHoursSaved * 1.15);
-    const max = Math.min(uncappedMax, theoreticalMax);
+    const max = Math.round(baseHoursSaved * 1.15);
     return { min, max, theoreticalMax, readinessFactor };
 }
 

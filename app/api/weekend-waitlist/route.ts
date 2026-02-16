@@ -21,7 +21,13 @@ function sanitizeForSheetCell(value: unknown): string {
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return NextResponse.json(
+                { error: "Invalid JSON payload" },
+                { status: 400 }
+            );
+        }
         const {
             name,
             email,

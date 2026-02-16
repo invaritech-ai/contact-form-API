@@ -218,7 +218,7 @@ export async function POST(request: NextRequest) {
 
         // Recalculate server-side so scores cannot be tampered with by the client.
         const result = calculateAssessmentScore(inputs);
-        saveLeadToGoogleSheets(inputs, leadData, result, captchaStatus);
+        await saveLeadToGoogleSheets(inputs, leadData, result, captchaStatus);
 
         let mergedResult: AssessmentResult = result;
         const openRouterClient = createOpenRouterClient();
@@ -414,18 +414,18 @@ function saveLeadToGoogleSheets(
     leadData: LeadData,
     result: AssessmentResult,
     captchaStatus: "Verified" | "Not verified"
-) {
+): Promise<void> {
     const googleScriptUrl = process.env.GOOGLE_SCRIPT_URL;
     const googleScriptWebhookSecret =
         process.env.GOOGLE_SCRIPT_WEBHOOK_SECRET?.trim();
     if (!googleScriptUrl) {
-        return;
+        return Promise.resolve();
     }
     if (!googleScriptWebhookSecret) {
         console.error(
             "GOOGLE_SCRIPT_WEBHOOK_SECRET is not configured; skipping assessment lead save"
         );
-        return;
+        return Promise.resolve();
     }
 
     const normalizedLeadData = normalizeLeadData(leadData);
@@ -461,11 +461,20 @@ function saveLeadToGoogleSheets(
         volume: inputs.monthlyVolumeBand,
     };
 
-    void fetch(googleScriptUrl, {
+    return fetch(googleScriptUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(GOOGLE_SCRIPT_TIMEOUT_MS),
+    }).then(async (response) => {
+        if (!response.ok) {
+            const body = await response.text().catch(() => "");
+            console.error("Assessment lead save non-OK response:", {
+                status: response.status,
+                statusText: response.statusText,
+                body,
+            });
+        }
     }).catch((error: unknown) => {
         console.error("Assessment lead save failed:", error);
     });
