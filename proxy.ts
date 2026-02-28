@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
     // Only enforce on mutating requests — GET /api (health check) stays public
     if (request.method === "GET") {
         return NextResponse.next();
