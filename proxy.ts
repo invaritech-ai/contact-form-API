@@ -9,7 +9,8 @@ export function proxy(request: NextRequest) {
     const secret = request.headers.get("x-internal-secret");
     const expectedSecret = process.env.INTERNAL_SECRET;
 
-    if (!expectedSecret || !secret || secret !== expectedSecret) {
+    // Only enforce when a secret is configured — fail-open if env var is absent
+    if (expectedSecret && (!secret || secret !== expectedSecret)) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

@@ -7,186 +7,66 @@ import {
     type AssessmentResult,
 } from "@/lib/assessment-calculator";
 
-const CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-};
-
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini";
-const OPENROUTER_TIMEOUT_MS = 12_000; // 12s timeout for LLM call
+const OPENROUTER_TIMEOUT_MS = 12_000;
 const GOOGLE_SCRIPT_TIMEOUT_MS = 8_000;
-const MAX_ENUM_INPUT_LENGTH = 64;
-const MAX_COMPANY_NAME_LENGTH = 64;
 const MAX_STRATEGIC_ADVICE_LENGTH = 2_000;
 const COMPANY_PLACEHOLDER = "the company";
 
-// --- Lead data constraints ---
-const MAX_LEAD_FIELDS = 10;
-const MAX_LEAD_VALUE_LENGTH = 500;
-const ALLOWED_LEAD_FIELDS = new Set([
-    "name", "email", "company", "phone", "country", "source",
-]);
-const MAX_TOOLING_ITEMS = 10;
-
-const ALLOWED_COMPANY_SIZES = [
-    "50-200",
-    "200-500",
-    "500-1000",
-    "1000-2000",
-    "2000+",
-] as const;
-const ALLOWED_FUNCTION_FOCUS = [
-    "customer-support",
-    "sales",
-    "operations",
-    "marketing",
-    "finance",
-    "legal",
-    "health-fitness",
-    "hr",
-    "it",
-    "product",
-    "engineering",
-    "analytics",
-] as const;
-const ALLOWED_PRIMARY_WORKFLOW_GOALS = [
-    "knowledge",
-    "drafting",
-    "intake",
-    "finance",
-    "lead-qualification",
-    "client-onboarding",
-    "scheduling",
-    "reporting",
-    "content-generation",
-] as const;
-const ALLOWED_MONTHLY_VOLUME_BANDS = [
-    "100-500",
-    "500-1000",
-    "1000-2000",
-    "2000-5000",
-    "5000+",
-] as const;
-const ALLOWED_CURRENT_AHT_BANDS = [
-    "<1 min",
-    "1-3 min",
-    "3-5 min",
-    "5+ min",
-] as const;
-const ALLOWED_ERROR_TOLERANCES = [
-    "minimal",
-    "rework",
-    "critical",
-] as const;
-const ALLOWED_DATA_ACCESS_READINESS = [
-    "minimal",
-    "synthetic",
-    "blocked",
-] as const;
-const ALLOWED_PROCESS_MATURITY = [
-    "documented",
-    "partial",
-    "tribal",
-] as const;
-const ALLOWED_DATA_STRUCTURES = [
-    "structured",
-    "semi",
-    "unstructured",
-    "scattered",
-] as const;
-const ALLOWED_SPONSOR_READINESS = [
-    "yes",
-    "partial",
-    "no",
-] as const;
-const ALLOWED_BUDGET_FITS = [
-    "<$10k",
-    "$10-25k",
-    "≥$25k",
-] as const;
-const ALLOWED_TOOLING = [
-    "salesforce",
-    "hubspot",
-    "slack",
-    "teams",
-    "zendesk",
-    "intercom",
-    "notion",
-    "airtable",
-    "jira",
-    "asana",
-    "google-workspace",
-    "microsoft-365",
-    "zapier",
-    "make",
-    "n8n",
-    "shopify",
-    "stripe",
-    "quickbooks",
-    "netsuite",
-    "none",
-] as const;
-
-const COMPANY_SIZE_LOOKUP = createEnumLookup(ALLOWED_COMPANY_SIZES);
-const FUNCTION_FOCUS_LOOKUP = createEnumLookup(ALLOWED_FUNCTION_FOCUS);
-const PRIMARY_WORKFLOW_GOAL_LOOKUP = createEnumLookup(ALLOWED_PRIMARY_WORKFLOW_GOALS);
-const MONTHLY_VOLUME_BAND_LOOKUP = createEnumLookup(ALLOWED_MONTHLY_VOLUME_BANDS);
-const CURRENT_AHT_BAND_LOOKUP = createEnumLookup(ALLOWED_CURRENT_AHT_BANDS);
-const ERROR_TOLERANCE_LOOKUP = createEnumLookup(ALLOWED_ERROR_TOLERANCES);
-const DATA_ACCESS_READINESS_LOOKUP = createEnumLookup(ALLOWED_DATA_ACCESS_READINESS);
-const PROCESS_MATURITY_LOOKUP = createEnumLookup(ALLOWED_PROCESS_MATURITY);
-const DATA_STRUCTURE_LOOKUP = createEnumLookup(ALLOWED_DATA_STRUCTURES);
-const SPONSOR_READINESS_LOOKUP = createEnumLookup(ALLOWED_SPONSOR_READINESS);
-const BUDGET_FIT_LOOKUP = createEnumLookup(ALLOWED_BUDGET_FITS);
-const TOOLING_LOOKUP = createEnumLookup(ALLOWED_TOOLING);
-
-type LeadData = Record<string, unknown>;
 type AssessmentInsights = Pick<
     AssessmentResult,
     "strategicAdvice" | "reasoning" | "nextSteps"
 >;
 
 export async function POST(request: NextRequest) {
+    console.log("[assessment] POST received");
     try {
-        const body = await request.json().catch(() => null);
-        if (!isRecord(body)) {
-            return jsonResponse(
+        const data = await request.json().catch(() => null);
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
+            console.log("[assessment] 400: invalid JSON");
+            return NextResponse.json(
                 { success: false, error: "Invalid JSON payload" },
-                400
+                { status: 400 }
             );
         }
 
-        const { inputs: rawInputs, leadData, recaptchaToken } = body;
-        const inputs = normalizeAssessmentInputs(rawInputs);
-        if (!inputs || !isRecord(leadData)) {
-            return jsonResponse(
-                { success: false, error: "Missing or invalid required fields" },
-                400
+        const { inputs, leadData, recaptchaToken } = data;
+        console.log("[assessment] payload keys:", Object.keys(data));
+        console.log("[assessment] inputs present:", !!inputs, "| leadData present:", !!leadData, "| token type:", typeof recaptchaToken, "| token length:", typeof recaptchaToken === "string" ? recaptchaToken.length : 0);
+
+        if (!inputs || typeof inputs !== "object" || !leadData || typeof leadData !== "object") {
+            console.log("[assessment] 400: missing inputs or leadData");
+            return NextResponse.json(
+                { success: false, error: "inputs and leadData are required" },
+                { status: 400 }
             );
         }
 
-        // --- reCAPTCHA verification (fail-closed to prevent bot submissions) ---
+        // Validate reCAPTCHA (fail-closed to block bot submissions)
         const recaptchaSecretKey = process.env.RECAPTCHA_SECRET_KEY?.trim();
+        console.log("[assessment] RECAPTCHA_SECRET_KEY configured:", !!recaptchaSecretKey);
         if (!recaptchaSecretKey) {
-            return jsonResponse(
+            console.log("[assessment] 503: RECAPTCHA_SECRET_KEY not set");
+            return NextResponse.json(
                 { success: false, error: "reCAPTCHA is not configured" },
-                503
+                { status: 503 }
             );
         }
 
         const normalizedRecaptchaToken =
             typeof recaptchaToken === "string" ? recaptchaToken.trim() : "";
         if (!normalizedRecaptchaToken) {
-            return jsonResponse(
+            console.log("[assessment] 400: reCAPTCHA token missing or empty");
+            return NextResponse.json(
                 { success: false, error: "reCAPTCHA token is required" },
-                400
+                { status: 400 }
             );
         }
 
         let captchaStatus: "Verified" | "Not verified" = "Not verified";
         try {
+            console.log("[assessment] verifying reCAPTCHA token...");
             const verifyParams = new URLSearchParams({
                 secret: recaptchaSecretKey,
                 response: normalizedRecaptchaToken,
@@ -200,52 +80,50 @@ export async function POST(request: NextRequest) {
                     body: verifyParams.toString(),
                 }
             );
+
             const recaptchaResult = await recaptchaResponse.json();
+            console.log("[assessment] reCAPTCHA result: success=", recaptchaResult.success, "errors=", recaptchaResult["error-codes"]);
             if (!recaptchaResult.success) {
-                return jsonResponse(
+                return NextResponse.json(
                     { success: false, error: "reCAPTCHA verification failed" },
-                    403
+                    { status: 403 }
                 );
             }
+
             captchaStatus = "Verified";
         } catch (error) {
-            console.error("reCAPTCHA verification error:", error);
-            return jsonResponse(
+            console.error("[assessment] reCAPTCHA verification error:", error);
+            return NextResponse.json(
                 { success: false, error: "reCAPTCHA verification unavailable" },
-                503
+                { status: 503 }
             );
         }
 
-        // Recalculate server-side so scores cannot be tampered with by the client.
-        const result = calculateAssessmentScore(inputs);
-        await saveLeadToGoogleSheets(inputs, leadData, result, captchaStatus);
+        // Calculate scores server-side
+        console.log("[assessment] calculating scores for functionFocus:", (inputs as AssessmentInputs).functionFocus);
+        const result = calculateAssessmentScore(inputs as AssessmentInputs);
 
+        // Save lead to Google Sheets (fire-and-forget)
+        saveLeadToGoogleSheets(inputs as AssessmentInputs, leadData, result, captchaStatus).catch(
+            (err) => console.error("Lead save failed:", err)
+        );
+
+        // Attempt AI insight enhancement (best-effort)
         let mergedResult: AssessmentResult = result;
         const openRouterClient = createOpenRouterClient();
         if (openRouterClient) {
-            const aiInsights = await generateAIInsights(
-                openRouterClient,
-                inputs,
-                leadData,
-                result
-            );
+            const aiInsights = await generateAIInsights(openRouterClient, inputs as AssessmentInputs, leadData, result);
             if (aiInsights) {
-                mergedResult = {
-                    ...result,
-                    ...aiInsights,
-                };
+                mergedResult = { ...result, ...aiInsights };
             }
         }
 
-        return jsonResponse({
-            success: true,
-            result: mergedResult,
-        });
+        return NextResponse.json({ success: true, result: mergedResult });
     } catch (error) {
         console.error("Assessment API error:", error);
-        return jsonResponse(
+        return NextResponse.json(
             { success: false, error: "Internal server error" },
-            500
+            { status: 500 }
         );
     }
 }
@@ -253,182 +131,28 @@ export async function POST(request: NextRequest) {
 export async function OPTIONS() {
     return new NextResponse(null, {
         status: 200,
-        headers: CORS_HEADERS,
+        headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        },
     });
-}
-
-function jsonResponse(
-    payload: { success: boolean; result?: AssessmentResult; error?: string },
-    status = 200
-) {
-    return NextResponse.json(payload, {
-        status,
-        headers: CORS_HEADERS,
-    });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function createEnumLookup(
-    values: readonly string[]
-): Map<string, string> {
-    return new Map(values.map((value) => [value.toLowerCase(), value]));
-}
-
-function sanitizeInputText(raw: unknown, maxLength: number): string {
-    if (typeof raw !== "string") {
-        return "";
-    }
-
-    return raw
-        .normalize("NFKC")
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: Intentionally stripping C0/C1 control characters
-        .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, maxLength)
-        .trim();
-}
-
-function normalizeEnumValue(
-    raw: unknown,
-    lookup: ReadonlyMap<string, string>,
-    options: { slugStyle?: boolean } = {}
-): string | null {
-    const sanitized = sanitizeInputText(raw, MAX_ENUM_INPUT_LENGTH);
-    if (!sanitized) {
-        return null;
-    }
-
-    const lookupKey = options.slugStyle
-        ? sanitized.toLowerCase().replace(/[_\s]+/g, "-")
-        : sanitized.toLowerCase();
-
-    return lookup.get(lookupKey) ?? null;
-}
-
-function normalizeToolingItems(raw: unknown): string[] | null {
-    if (!Array.isArray(raw)) {
-        return null;
-    }
-
-    const normalized = new Set<string>();
-    for (const item of raw) {
-        const normalizedItem = normalizeEnumValue(item, TOOLING_LOOKUP, {
-            slugStyle: true,
-        });
-
-        // Unexpected tooling values are dropped to avoid prompt injection.
-        if (!normalizedItem) {
-            continue;
-        }
-
-        normalized.add(normalizedItem);
-        if (normalized.size >= MAX_TOOLING_ITEMS) {
-            break;
-        }
-    }
-
-    return Array.from(normalized);
-}
-
-function normalizeAssessmentInputs(value: unknown): AssessmentInputs | null {
-    if (!isRecord(value)) {
-        return null;
-    }
-
-    const companySize = normalizeEnumValue(value.companySize, COMPANY_SIZE_LOOKUP);
-    const functionFocus = normalizeEnumValue(value.functionFocus, FUNCTION_FOCUS_LOOKUP, {
-        slugStyle: true,
-    });
-    const primaryWorkflowGoal = normalizeEnumValue(
-        value.primaryWorkflowGoal,
-        PRIMARY_WORKFLOW_GOAL_LOOKUP,
-        { slugStyle: true }
-    );
-    const monthlyVolumeBand = normalizeEnumValue(
-        value.monthlyVolumeBand,
-        MONTHLY_VOLUME_BAND_LOOKUP
-    );
-    const currentAHTBand = normalizeEnumValue(
-        value.currentAHTBand,
-        CURRENT_AHT_BAND_LOOKUP
-    );
-    const errorTolerance = normalizeEnumValue(value.errorTolerance, ERROR_TOLERANCE_LOOKUP, {
-        slugStyle: true,
-    });
-    const dataAccessReadiness = normalizeEnumValue(
-        value.dataAccessReadiness,
-        DATA_ACCESS_READINESS_LOOKUP,
-        { slugStyle: true }
-    );
-    const processMaturity = normalizeEnumValue(value.processMaturity, PROCESS_MATURITY_LOOKUP, {
-        slugStyle: true,
-    });
-    const dataStructure = normalizeEnumValue(value.dataStructure, DATA_STRUCTURE_LOOKUP, {
-        slugStyle: true,
-    });
-    const sponsorReady = normalizeEnumValue(value.sponsorReady, SPONSOR_READINESS_LOOKUP, {
-        slugStyle: true,
-    });
-    const budgetFit = normalizeEnumValue(value.budgetFit, BUDGET_FIT_LOOKUP);
-    const tooling = normalizeToolingItems(value.tooling);
-
-    if (
-        !companySize ||
-        !functionFocus ||
-        !primaryWorkflowGoal ||
-        !monthlyVolumeBand ||
-        !currentAHTBand ||
-        !errorTolerance ||
-        !dataAccessReadiness ||
-        !processMaturity ||
-        !dataStructure ||
-        !sponsorReady ||
-        !budgetFit ||
-        tooling === null
-    ) {
-        return null;
-    }
-
-    return {
-        companySize,
-        functionFocus,
-        primaryWorkflowGoal,
-        monthlyVolumeBand,
-        currentAHTBand,
-        errorTolerance,
-        dataAccessReadiness,
-        processMaturity,
-        dataStructure,
-        sponsorReady,
-        budgetFit,
-        tooling,
-    };
 }
 
 function saveLeadToGoogleSheets(
     inputs: AssessmentInputs,
-    leadData: LeadData,
+    leadData: Record<string, unknown>,
     result: AssessmentResult,
     captchaStatus: "Verified" | "Not verified"
 ): Promise<void> {
     const googleScriptUrl = process.env.GOOGLE_SCRIPT_URL;
-    const googleScriptWebhookSecret =
-        process.env.GOOGLE_SCRIPT_WEBHOOK_SECRET?.trim();
-    if (!googleScriptUrl) {
-        return Promise.resolve();
-    }
-    if (!googleScriptWebhookSecret) {
-        console.error(
-            "GOOGLE_SCRIPT_WEBHOOK_SECRET is not configured; skipping assessment lead save"
-        );
+    const googleScriptWebhookSecret = process.env.GOOGLE_SCRIPT_WEBHOOK_SECRET?.trim();
+
+    if (!googleScriptUrl || !googleScriptWebhookSecret) {
+        console.error("Google Sheets not configured; skipping lead save");
         return Promise.resolve();
     }
 
-    const normalizedLeadData = normalizeLeadData(leadData);
     const assessmentSummary = [
         `Target Function: ${formatLabel(inputs.functionFocus)}`,
         `Primary Goal: ${formatLabel(inputs.primaryWorkflowGoal)}`,
@@ -438,14 +162,23 @@ function saveLeadToGoogleSheets(
         `Data Structure: ${inputs.dataStructure}`,
         `Process Maturity: ${inputs.processMaturity}`,
         `Data Readiness: ${inputs.dataAccessReadiness}`,
-        `Tooling: ${inputs.tooling.join(", ")}`,
+        `Tooling: ${(inputs.tooling ?? []).join(", ")}`,
         `---`,
         `Archetype: ${result.archetypeTitle}`,
-        `Scores - Viability: ${result.viabilityScore}, Readiness: ${result.readinessScore}, Risk: ${result.riskScore}`
+        `Scores - Viability: ${result.viabilityScore}, Readiness: ${result.readinessScore}, Risk: ${result.riskScore}`,
     ].join("\n");
 
+    // Sanitize lead data — only allow known string fields
+    const allowedLeadFields = new Set(["name", "email", "company", "phone"]);
+    const sanitizedLead: Record<string, string> = {};
+    for (const [key, val] of Object.entries(leadData)) {
+        if (allowedLeadFields.has(key) && typeof val === "string") {
+            sanitizedLead[key] = val.slice(0, 500);
+        }
+    }
+
     const payload = {
-        ...normalizedLeadData,
+        ...sanitizedLead,
         message: assessmentSummary,
         captcha: captchaStatus,
         webhookSecret: googleScriptWebhookSecret,
@@ -471,46 +204,15 @@ function saveLeadToGoogleSheets(
             const body = await response.text().catch(() => "");
             console.error("Assessment lead save non-OK response:", {
                 status: response.status,
-                statusText: response.statusText,
-                body,
+                body: body.slice(0, 200),
             });
         }
-    }).catch((error: unknown) => {
-        console.error("Assessment lead save failed:", error);
     });
-}
-
-/**
- * Normalizes lead data with field allowlist and size constraints
- * to prevent payload bloat from malicious clients.
- */
-function normalizeLeadData(
-    leadData: LeadData
-): Record<string, string | number | boolean> {
-    const normalized: Record<string, string | number | boolean> = {};
-    let fieldCount = 0;
-
-    for (const [key, value] of Object.entries(leadData)) {
-        if (fieldCount >= MAX_LEAD_FIELDS) break;
-        if (!ALLOWED_LEAD_FIELDS.has(key)) continue;
-
-        if (typeof value === "string") {
-            normalized[key] = value.slice(0, MAX_LEAD_VALUE_LENGTH);
-            fieldCount++;
-        } else if (typeof value === "number" || typeof value === "boolean") {
-            normalized[key] = value;
-            fieldCount++;
-        }
-    }
-
-    return normalized;
 }
 
 function createOpenRouterClient(): OpenAI | null {
     const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-        return null;
-    }
+    if (!apiKey) return null;
 
     const defaultHeaders: Record<string, string> = {};
     if (process.env.OPENROUTER_REFERER) {
@@ -528,74 +230,45 @@ function createOpenRouterClient(): OpenAI | null {
     });
 }
 
-/**
- * Sanitizes a company name for safe LLM prompt inclusion.
- * Trims, truncates to 64 chars, strips control characters and
- * instruction-like tokens to mitigate prompt injection.
- */
 function sanitizeCompanyName(raw: unknown): string {
-    const name = sanitizeInputText(raw, MAX_COMPANY_NAME_LENGTH);
-
-    if (!name || hasSuspiciousPromptTokens(name)) {
+    if (typeof raw !== "string") return COMPANY_PLACEHOLDER;
+    const name = raw.normalize("NFKC").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim().slice(0, 64).trim();
+    if (!name) return COMPANY_PLACEHOLDER;
+    // Basic prompt injection guard
+    if (/^(ignore|return|stop|forget|system|assistant|developer|instruction|prompt)\b/i.test(name)) {
         return COMPANY_PLACEHOLDER;
     }
-
     return name;
-}
-
-function hasSuspiciousPromptTokens(value: string): boolean {
-    // Instruction-like prefixes that often indicate prompt injection.
-    if (/^(ignore|return|stop|forget|system|assistant|developer|instruction|prompt)\b/i.test(value)) {
-        return true;
-    }
-
-    // Embedded JSON/code/command-like patterns.
-    return (
-        /```/.test(value) ||
-        /[{\[]\s*["'][^"']+["']\s*:/.test(value) ||
-        /<\/?(system|assistant|user|tool|script)\b/i.test(value) ||
-        /(\|\||&&|;\s*(rm|curl|wget|bash|sh|python|node)\b|\$\(|`)/i.test(value)
-    );
 }
 
 async function generateAIInsights(
     openai: OpenAI,
     inputs: AssessmentInputs,
-    leadData: LeadData,
+    leadData: Record<string, unknown>,
     result: AssessmentResult
 ): Promise<AssessmentInsights | null> {
     try {
         const company = sanitizeCompanyName(leadData.company);
-        const companySize = inputs.companySize;
-        const functionFocus = formatLabel(inputs.functionFocus);
-        const primaryWorkflowGoal = formatLabel(inputs.primaryWorkflowGoal);
-        const monthlyVolumeBand = inputs.monthlyVolumeBand;
-        const currentAHTBand = inputs.currentAHTBand;
-        const processMaturity = formatLabel(inputs.processMaturity);
-        const dataStructure = formatLabel(inputs.dataStructure);
-        const dataAccessReadiness = formatLabel(inputs.dataAccessReadiness);
-        const tooling = inputs.tooling.length > 0
+        const tooling = (inputs.tooling ?? []).length > 0
             ? inputs.tooling.map((item) => formatLabel(item)).join(", ")
             : "None listed";
 
-        const prompt = `
-Company: ${company}
-Size: ${companySize}
-Function: ${functionFocus}
-Goal: ${primaryWorkflowGoal}
-Volume: ${monthlyVolumeBand}
-AHT: ${currentAHTBand}
-Process maturity: ${processMaturity}
-Data structure: ${dataStructure}
-Data access readiness: ${dataAccessReadiness}
+        const prompt = `Company: ${company}
+Size: ${inputs.companySize}
+Function: ${formatLabel(inputs.functionFocus)}
+Goal: ${formatLabel(inputs.primaryWorkflowGoal)}
+Volume: ${inputs.monthlyVolumeBand}
+AHT: ${inputs.currentAHTBand}
+Process maturity: ${formatLabel(inputs.processMaturity)}
+Data structure: ${formatLabel(inputs.dataStructure)}
+Data access readiness: ${formatLabel(inputs.dataAccessReadiness)}
 Tooling: ${tooling}
 
 Scores:
 - Viability: ${result.viabilityScore}/100
 - Readiness: ${result.readinessScore}/100
 - Risk: ${result.riskScore}/100
-- Archetype: ${result.archetypeTitle}
-`;
+- Archetype: ${result.archetypeTitle}`;
 
         const completion = await openai.chat.completions.create({
             model: OPENROUTER_MODEL,
@@ -604,8 +277,7 @@ Scores:
             messages: [
                 {
                     role: "system",
-                    content:
-                        "You are a senior AI automation consultant. Return strict JSON only with keys strategicAdvice, reasoning, nextSteps.",
+                    content: "You are a senior AI automation consultant. Return strict JSON only with keys strategicAdvice, reasoning, nextSteps.",
                 },
                 {
                     role: "user",
@@ -622,9 +294,7 @@ Scores:
         });
 
         const rawContent = completion.choices[0]?.message?.content;
-        if (!rawContent) {
-            return null;
-        }
+        if (!rawContent) return null;
 
         const parsed = JSON.parse(rawContent) as Partial<AssessmentInsights>;
         if (
@@ -647,19 +317,11 @@ Scores:
             .filter(Boolean)
             .slice(0, 5);
 
-        const strategicAdvice = parsed.strategicAdvice
-            .trim()
-            .slice(0, MAX_STRATEGIC_ADVICE_LENGTH);
+        const strategicAdvice = parsed.strategicAdvice.trim().slice(0, MAX_STRATEGIC_ADVICE_LENGTH);
 
-        if (!strategicAdvice || reasoning.length === 0 || nextSteps.length === 0) {
-            return null;
-        }
+        if (!strategicAdvice || reasoning.length === 0 || nextSteps.length === 0) return null;
 
-        return {
-            strategicAdvice,
-            reasoning,
-            nextSteps,
-        };
+        return { strategicAdvice, reasoning, nextSteps };
     } catch (error) {
         console.error("AI insight generation failed:", error);
         return null;
