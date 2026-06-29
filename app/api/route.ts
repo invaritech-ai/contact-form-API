@@ -11,11 +11,6 @@ export async function GET() {
                 method: "POST",
                 description: "Submit contact form data",
             },
-            assessment: {
-                path: "/api/assessment",
-                method: "POST",
-                description: "Calculate assessment score and generate AI insights",
-            },
         },
         timestamp: new Date().toISOString(),
     });
