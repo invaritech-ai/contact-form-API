@@ -35,6 +35,9 @@ export const COLUMNS = [
 ] as const;
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+// An abort surfaces as a thrown error, which handleContact maps to 503.
+const TIMEOUT_MS = 10_000;
 const SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 /**
@@ -72,6 +75,17 @@ export function buildRow(
 
     return COLUMNS.map((column) => sanitizeForSheetCell(values[column] ?? ""));
 }
+
+/** 1-based column index to its A1 letter: 1 -> A, 27 -> AA, 35 -> AI. */
+export function columnLetter(index: number): string {
+    let letter = "";
+    for (let n = index; n > 0; n = Math.floor((n - 1) / 26)) {
+        letter = String.fromCharCode(65 + ((n - 1) % 26)) + letter;
+    }
+    return letter;
+}
+
+export const LAST_COLUMN = columnLetter(COLUMNS.length);
 
 function base64url(bytes: Uint8Array): string {
     let binary = "";
@@ -139,6 +153,7 @@ async function accessToken(env: Env): Promise<string> {
             grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
             assertion: `${unsigned}.${base64url(new Uint8Array(signature))}`,
         }).toString(),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -165,7 +180,7 @@ export async function appendLeadRow(
     if (!spreadsheetId) throw new Error("Google Sheets configuration missing");
 
     const sheetName = env.LEADS_SHEET_NAME?.trim() || "Sheet1";
-    const range = encodeURIComponent(`${sheetName}!A:AI`);
+    const range = encodeURIComponent(`${sheetName}!A:${LAST_COLUMN}`);
     const url =
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}` +
         `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
@@ -179,6 +194,7 @@ export async function appendLeadRow(
         body: JSON.stringify({
             values: [buildRow(submission, turnstile, new Date().toISOString())],
         }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
     if (!response.ok) {

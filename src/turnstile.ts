@@ -9,6 +9,10 @@ export interface TurnstileResult {
 
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
+// A stalled upstream must not hold the request open; an abort lands in the
+// catch below and is reported as "unavailable".
+const TIMEOUT_MS = 5_000;
+
 /**
  * Client IP for Turnstile's optional `remoteip`.
  *
@@ -38,6 +42,7 @@ export async function verifyTurnstile(
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: body.toString(),
+            signal: AbortSignal.timeout(TIMEOUT_MS),
         });
 
         if (!response.ok) {

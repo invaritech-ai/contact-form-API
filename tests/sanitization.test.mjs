@@ -46,6 +46,12 @@ describe("spreadsheet formula injection", () => {
 });
 
 describe("spreadsheet row shape", () => {
+    it("matches the 35-column header row the live sheet uses", () => {
+        // Pinned deliberately: the sheet is shared with the resource form, and a
+        // changed count here means the sheet's header row must change with it.
+        assert.equal(COLUMNS.length, 35);
+    });
+
     it("emits one cell per column, in column order", () => {
         const row = buildRow(submission(), turnstile, "2026-01-01T00:00:00.000Z");
 

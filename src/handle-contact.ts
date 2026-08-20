@@ -12,6 +12,7 @@ import { clientIp, verifyTurnstile, type TurnstileResult } from "./turnstile.ts"
 import { appendLeadRow } from "./sheets.ts";
 import { sendNotification } from "./email.ts";
 import { numberFrom, type Env } from "./env.ts";
+import { readLimitedFormData } from "./body.ts";
 
 export interface ContactDeps {
     verifyTurnstile: (env: Env, token: string, ip: string) => Promise<TurnstileResult>;
@@ -75,11 +76,6 @@ export async function handleContact(
             return json(env, { success: false, error: "Origin not allowed" }, 403, origin);
         }
 
-        const maxBytes = numberFrom(env.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES);
-        if (Number(request.headers.get("content-length") ?? 0) > maxBytes) {
-            return json(env, { success: false, error: "Request too large." }, 413, origin);
-        }
-
         const ip = clientIp(request.headers);
         if (!(await deps.checkRateLimit(env, ip || "unknown"))) {
             return json(
@@ -90,14 +86,15 @@ export async function handleContact(
             );
         }
 
-        let form: FormData;
-        try {
-            form = await request.formData();
-        } catch {
-            return json(env, { success: false, error: "Invalid form submission." }, 400, origin);
+        const maxBytes = numberFrom(env.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES);
+        const body = await readLimitedFormData(request, maxBytes);
+        if (!body.ok) {
+            return body.reason === "too-large"
+                ? json(env, { success: false, error: "Request too large." }, 413, origin)
+                : json(env, { success: false, error: "Invalid form submission." }, 400, origin);
         }
 
-        const parsed = parseSubmission(form);
+        const parsed = parseSubmission(body.form);
         if (!parsed.ok) {
             return json(env, { success: false, error: parsed.error }, 422, origin);
         }

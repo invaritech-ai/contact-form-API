@@ -2,6 +2,9 @@ import { ATTRIBUTION_FIELDS, type ContactSubmission } from "./fields.ts";
 import type { TurnstileResult } from "./turnstile.ts";
 import type { Env } from "./env.ts";
 
+// The notification is best-effort; an abort is caught by the caller and logged.
+const TIMEOUT_MS = 10_000;
+
 /** Escape every user-supplied value before it enters the HTML email body. */
 export function escapeHtml(value: string): string {
     return value
@@ -86,6 +89,7 @@ export async function sendNotification(
             subject: `New contact form submission from ${submission.name}`,
             html: buildEmailHtml(submission, turnstile),
         }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
     if (!response.ok) {

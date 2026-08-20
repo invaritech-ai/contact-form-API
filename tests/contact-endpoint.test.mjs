@@ -148,6 +148,59 @@ describe("validation", () => {
         assert.equal((await response.json()).success, false);
     });
 
+    /** A body of `totalBytes`, streamed, so no Content-Length is inferred. */
+    function streamingRequest(totalBytes, contentLength) {
+        const chunk = new Uint8Array(16 * 1024).fill(65);
+        let sent = 0;
+        const stream = new ReadableStream({
+            pull(controller) {
+                if (sent >= totalBytes) {
+                    controller.close();
+                    return;
+                }
+                controller.enqueue(chunk);
+                sent += chunk.byteLength;
+            },
+        });
+
+        const headers = {
+            origin: ORIGIN,
+            "content-type": "multipart/form-data; boundary=x",
+        };
+        if (contentLength !== undefined) headers["content-length"] = contentLength;
+
+        return new Request(URL_UNDER_TEST, {
+            method: "POST",
+            body: stream,
+            duplex: "half",
+            headers,
+        });
+    }
+
+    it("rejects an oversized body sent without a Content-Length", async () => {
+        const response = await handleContact(streamingRequest(200_000), ENV, deps());
+
+        assert.equal(response.status, 413);
+        assert.equal(calls.appended.length, 0);
+    });
+
+    it("rejects an oversized body that understates its Content-Length", async () => {
+        const response = await handleContact(streamingRequest(200_000, "10"), ENV, deps());
+
+        assert.equal(response.status, 413);
+        assert.equal(calls.appended.length, 0);
+    });
+
+    it("honours a lowered MAX_BODY_BYTES", async () => {
+        const response = await handleContact(
+            request(validForm()),
+            { ...ENV, MAX_BODY_BYTES: "100" },
+            deps(),
+        );
+
+        assert.equal(response.status, 413);
+    });
+
     it("rejects an oversized body with 413", async () => {
         const oversized = new Request(URL_UNDER_TEST, {
             method: "POST",

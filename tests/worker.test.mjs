@@ -3,7 +3,13 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 
 import worker from "../src/index.ts";
 import { checkRateLimit, resetRateLimit } from "../src/rate-limit.ts";
-import { appendLeadRow, pemToPkcs8, resetTokenCache } from "../src/sheets.ts";
+import {
+    appendLeadRow,
+    COLUMNS,
+    columnLetter,
+    pemToPkcs8,
+    resetTokenCache,
+} from "../src/sheets.ts";
 import { parseSubmission } from "../src/fields.ts";
 
 const ENV = { ALLOWED_ORIGINS: "https://invaritech.ai" };
@@ -176,7 +182,21 @@ describe("google service-account auth", () => {
         assert.ok(requests[1].url.startsWith("https://sheets.googleapis.com/v4/spreadsheets/sheet-123"));
         assert.ok(requests[1].url.includes("valueInputOption=USER_ENTERED"));
         assert.equal(requests[1].init.headers.Authorization, "Bearer token-abc");
-        assert.equal(JSON.parse(requests[1].init.body).values[0].length, 35);
+        assert.equal(JSON.parse(requests[1].init.body).values[0].length, COLUMNS.length);
+    });
+
+    it("bounds both upstream calls with an abort signal", async () => {
+        await appendLeadRow(env(), submission(), { status: "verified", hostname: "" });
+
+        for (const call of requests) {
+            assert.ok(call.init.signal instanceof AbortSignal);
+        }
+    });
+
+    it("targets the full column range", async () => {
+        await appendLeadRow(env(), submission(), { status: "verified", hostname: "" });
+
+        assert.ok(requests[1].url.includes(encodeURIComponent(`Sheet1!A:${columnLetter(COLUMNS.length)}`)));
     });
 
     it("reuses the cached access token across submissions", async () => {
@@ -223,5 +243,18 @@ describe("google service-account auth", () => {
             new Uint8Array(pemToPkcs8(escaped)),
             new Uint8Array(pemToPkcs8(privateKeyPem)),
         );
+    });
+});
+
+describe("column letters", () => {
+    it("maps 1-based indexes onto A1 notation", () => {
+        assert.equal(columnLetter(1), "A");
+        assert.equal(columnLetter(26), "Z");
+        assert.equal(columnLetter(27), "AA");
+        assert.equal(columnLetter(35), "AI");
+    });
+
+    it("covers every column the sheet writes", () => {
+        assert.equal(columnLetter(COLUMNS.length), "AI");
     });
 });
