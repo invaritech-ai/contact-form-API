@@ -10,15 +10,15 @@ workers_dev = true
 # deploy fails on this, comment the block out, deploy to workers.dev, then add
 # the zone to this account and restore it.
 [[routes]]
-pattern = "api.invaritech.ai"
+pattern = "contact-api.invaritech.ai"
 custom_domain = true
 
 # Non-secret configuration. Secrets are set with `wrangler secret put`.
 [vars]
 ALLOWED_ORIGINS = "https://invaritech.ai,https://www.invaritech.ai"
-CONTACT_NOTIFICATION_FROM = "Invaritech Website <website@invaritech.ai>"
+CONTACT_NOTIFICATION_FROM = "Invaritech Website <website@notifications.invaritech.ai>"
 CONTACT_NOTIFICATION_TO = "hello@invaritech.ai"
-LEADS_SHEET_NAME = "Sheet1"
+LEADS_SHEET_NAME = "Leads"
 MAX_BODY_BYTES = "100000"
 
 # Account-wide rate limiting, enforced at the edge rather than per isolate.
