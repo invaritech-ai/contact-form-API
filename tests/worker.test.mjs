@@ -289,22 +289,6 @@ describe("google service-account auth", () => {
         );
     });
 
-    it("decodes a key that carries its own .env variable-name prefix", () => {
-        // The production failure: the secret held the whole .env line, and the
-        // prefix letters are valid base64 characters so filtering did not help.
-        assert.deepEqual(
-            new Uint8Array(pemToPkcs8(`GOOGLE_SHEETS_PRIVATE_KEY="${privateKeyPem}"`)),
-            new Uint8Array(pemToPkcs8(privateKeyPem)),
-        );
-    });
-
-    it("ignores trailing content after the PEM footer", () => {
-        assert.deepEqual(
-            new Uint8Array(pemToPkcs8(`${privateKeyPem}\n# trailing comment`)),
-            new Uint8Array(pemToPkcs8(privateKeyPem)),
-        );
-    });
-
     it("decodes a PEM key wrapped in double quotes, as secret stores receive it", () => {
         // The exact production failure: the value was pasted from .env.local
         // with its quotes, so it did not start with the PEM header.

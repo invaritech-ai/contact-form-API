@@ -162,23 +162,18 @@ function encodeSegment(value: object): string {
 /**
  * Decode a PEM private key into the DER bytes `importKey` expects.
  *
- * Tolerant of how the value tends to arrive. Secret stores are routinely fed
- * the quoted form copied out of a .env file, and workerd's `atob` rejects the
- * stray quote where Node's accepts it — so the wrapper is stripped here, along
- * with anything else outside the base64 alphabet.
+ * Tolerates a value wrapped in quotes, as secret stores receive it when the
+ * quoted form is copied out of a .env file: workerd's `atob` rejects the stray
+ * quote where Node's accepts it. Nothing else about the value is corrected.
  */
 export function pemToPkcs8(pem: string): ArrayBuffer {
-    // Expand escaped newlines first: afterwards the "n" of a literal \\n would
-    // be indistinguishable from base64 payload.
-    const expanded = pem.replace(/\\n/g, "\n");
-
-    // Take only what sits between the PEM markers. This survives every way the
-    // value tends to arrive mangled — wrapped in quotes, carrying its own
-    // KEY=... prefix from a .env line, or padded with stray whitespace —
-    // because everything outside the markers is discarded rather than filtered.
-    const between = expanded.match(/-----BEGIN[^-]*-----([\s\S]*?)-----END/);
-
-    const body = (between ? between[1] : expanded).replace(/[^A-Za-z0-9+/=]/g, "");
+    const body = pem
+        .trim()
+        .replace(/^["']|["']$/g, "")
+        .replace(/\\n/g, "\n")
+        .replace(/-----BEGIN [^-]+-----/, "")
+        .replace(/-----END [^-]+-----/, "")
+        .replace(/\s+/g, "");
 
     const binary = atob(body);
     const bytes = new Uint8Array(binary.length);
