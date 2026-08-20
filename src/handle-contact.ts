@@ -45,6 +45,12 @@ function json(
     status: number,
     origin: string | null,
 ): Response {
+    if (!body.success) {
+        // The message is one of a fixed set of strings and names a field at
+        // most, never its value, so this carries no submitted data.
+        console.log("contact: rejected", JSON.stringify({ status, reason: body.error }));
+    }
+
     return new Response(JSON.stringify(body), {
         status,
         headers: {

@@ -448,3 +448,40 @@ describe("failure diagnostics", () => {
         }
     });
 });
+
+describe("turnstile diagnostics", () => {
+    it("logs Cloudflare error codes without logging the token", async () => {
+        const realFetch = globalThis.fetch;
+        const realError = console.error;
+        const logged = [];
+        console.error = (...args) => logged.push(args.join(" "));
+
+        globalThis.fetch = async () =>
+            new Response(
+                JSON.stringify({
+                    success: false,
+                    hostname: "invaritech.ai",
+                    "error-codes": ["invalid-input-secret"],
+                }),
+                { status: 200 },
+            );
+
+        const { verifyTurnstile } = await import("../src/turnstile.ts");
+        const result = await verifyTurnstile(
+            { TURNSTILE_SECRET_KEY: "secret-value" },
+            "turnstile-token-value",
+            "203.0.113.7",
+        );
+
+        globalThis.fetch = realFetch;
+        console.error = realError;
+
+        assert.equal(result.status, "failed");
+
+        const output = logged.join("\n");
+        assert.ok(output.includes("turnstile: verification rejected"));
+        assert.ok(output.includes("invalid-input-secret"));
+        assert.ok(!output.includes("turnstile-token-value"));
+        assert.ok(!output.includes("secret-value"));
+    });
+});

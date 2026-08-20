@@ -50,11 +50,26 @@ export async function verifyTurnstile(
             return { status: "unavailable", hostname: "" };
         }
 
-        const result = (await response.json()) as { success?: boolean; hostname?: string };
-        return {
-            status: result.success === true ? "verified" : "failed",
-            hostname: typeof result.hostname === "string" ? result.hostname : "",
+        const result = (await response.json()) as {
+            success?: boolean;
+            hostname?: string;
+            "error-codes"?: string[];
         };
+        const hostname = typeof result.hostname === "string" ? result.hostname : "";
+
+        if (result.success !== true) {
+            // Cloudflare's error codes name the cause exactly:
+            // invalid-input-secret (wrong secret), invalid-input-response
+            // (malformed token), timeout-or-duplicate (token reused or stale).
+            // The token itself is never logged.
+            console.error(
+                "turnstile: verification rejected",
+                JSON.stringify({ errorCodes: result["error-codes"] ?? [], hostname }),
+            );
+            return { status: "failed", hostname };
+        }
+
+        return { status: "verified", hostname };
     } catch {
         console.error("turnstile: siteverify request failed");
         return { status: "unavailable", hostname: "" };
