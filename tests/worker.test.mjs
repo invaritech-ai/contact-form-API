@@ -8,6 +8,7 @@ import {
     COLUMNS,
     columnLetter,
     pemToPkcs8,
+    quoteSheetName,
     resetTokenCache,
 } from "../src/sheets.ts";
 import { parseSubmission } from "../src/fields.ts";
@@ -196,7 +197,31 @@ describe("google service-account auth", () => {
     it("targets the full column range", async () => {
         await appendLeadRow(env(), submission(), { status: "verified", hostname: "" });
 
-        assert.ok(requests[1].url.includes(encodeURIComponent(`Sheet1!A:${columnLetter(COLUMNS.length)}`)));
+        assert.ok(
+            requests[1].url.includes(
+                encodeURIComponent(`'Sheet1'!A:${columnLetter(COLUMNS.length)}`),
+            ),
+        );
+    });
+
+    it("quotes a sheet name containing a space", async () => {
+        await appendLeadRow(
+            { ...env(), LEADS_SHEET_NAME: "Contact Leads" },
+            submission(),
+            { status: "verified", hostname: "" },
+        );
+
+        assert.ok(requests[1].url.includes(encodeURIComponent("'Contact Leads'!A:")));
+    });
+
+    it("escapes an apostrophe in the sheet name", async () => {
+        await appendLeadRow(
+            { ...env(), LEADS_SHEET_NAME: "O'Brien" },
+            submission(),
+            { status: "verified", hostname: "" },
+        );
+
+        assert.ok(requests[1].url.includes(encodeURIComponent("'O''Brien'!A:")));
     });
 
     it("reuses the cached access token across submissions", async () => {
@@ -256,5 +281,21 @@ describe("column letters", () => {
 
     it("covers every column the sheet writes", () => {
         assert.equal(columnLetter(COLUMNS.length), "AI");
+    });
+});
+
+describe("sheet name quoting", () => {
+    it("always quotes, so a plain name is still valid A1", () => {
+        assert.equal(quoteSheetName("Sheet1"), "'Sheet1'");
+    });
+
+    it("quotes names that would otherwise be ambiguous", () => {
+        assert.equal(quoteSheetName("Contact Leads"), "'Contact Leads'");
+        assert.equal(quoteSheetName("Q1"), "'Q1'");
+    });
+
+    it("doubles embedded apostrophes", () => {
+        assert.equal(quoteSheetName("O'Brien"), "'O''Brien'");
+        assert.equal(quoteSheetName("a'b'c"), "'a''b''c'");
     });
 });

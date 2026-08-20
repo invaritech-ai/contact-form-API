@@ -35,7 +35,10 @@ export async function readLimitedFormData(
 
             total += value.byteLength;
             if (total > maxBytes) {
-                await reader.cancel();
+                // Cancelling can reject when the underlying source has a write
+                // already in flight. The body is being discarded either way, so
+                // that failure is swallowed rather than left unhandled.
+                await reader.cancel().catch(() => {});
                 return { ok: false, reason: "too-large" };
             }
             chunks.push(value);

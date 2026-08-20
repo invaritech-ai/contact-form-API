@@ -87,6 +87,16 @@ export function columnLetter(index: number): string {
 
 export const LAST_COLUMN = columnLetter(COLUMNS.length);
 
+/**
+ * Quote a sheet name for A1 notation. Names containing spaces, punctuation, or
+ * anything that parses as a cell reference are invalid unquoted, and an
+ * embedded apostrophe is escaped by doubling it. Quoting is always valid, so
+ * plain names are quoted too rather than special-cased.
+ */
+export function quoteSheetName(name: string): string {
+    return `'${name.replace(/'/g, "''")}'`;
+}
+
 function base64url(bytes: Uint8Array): string {
     let binary = "";
     for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -180,7 +190,7 @@ export async function appendLeadRow(
     if (!spreadsheetId) throw new Error("Google Sheets configuration missing");
 
     const sheetName = env.LEADS_SHEET_NAME?.trim() || "Sheet1";
-    const range = encodeURIComponent(`${sheetName}!A:${LAST_COLUMN}`);
+    const range = encodeURIComponent(`${quoteSheetName(sheetName)}!A:${LAST_COLUMN}`);
     const url =
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}` +
         `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
