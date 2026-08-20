@@ -41,12 +41,18 @@ const TIMEOUT_MS = 10_000;
 const SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 /**
- * Neutralize spreadsheet formula injection. A leading apostrophe tells Sheets
- * to store the value as text; the apostrophe itself is not displayed.
+ * Force a value to be stored as text.
+ *
+ * `USER_ENTERED` makes Sheets parse each value as though it were typed by
+ * hand, which both evaluates formulas and coerces anything number-shaped:
+ * `02079460000` loses its leading zero, `1E5` becomes 100000, and `3-4` can
+ * become a date. A leading apostrophe suppresses all of that. Sheets does not
+ * display the apostrophe, and an apostrophe already present in the value is
+ * preserved because only the prefix is consumed.
  */
-export function sanitizeForSheetCell(value: string): string {
+export function asSheetText(value: string): string {
     if (!value) return "";
-    return /^[=+\-@]/.test(value) ? `'${value}` : value;
+    return `'${value}`;
 }
 
 /** Build the row in COLUMNS order, with every cell sanitized. */
@@ -73,7 +79,11 @@ export function buildRow(
         turnstile_hostname: turnstile.hostname,
     };
 
-    return COLUMNS.map((column) => sanitizeForSheetCell(values[column] ?? ""));
+    // The timestamp is generated here, not submitted, and is left parseable so
+    // the column remains a real date for sorting and filtering.
+    return COLUMNS.map((column) =>
+        column === "timestamp" ? timestamp : asSheetText(values[column] ?? ""),
+    );
 }
 
 /** 1-based column index to its A1 letter: 1 -> A, 27 -> AA, 35 -> AI. */

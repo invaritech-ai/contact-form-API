@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildRow, COLUMNS, sanitizeForSheetCell } from "../src/sheets.ts";
+import { asSheetText, buildRow, COLUMNS } from "../src/sheets.ts";
 import { buildEmailHtml, escapeHtml } from "../src/email.ts";
 import { clean, parseSubmission } from "../src/fields.ts";
 
@@ -26,22 +26,67 @@ function submission(overrides = {}) {
 describe("spreadsheet formula injection", () => {
     for (const prefix of ["=", "+", "-", "@"]) {
         it(`escapes a value beginning with ${prefix}`, () => {
-            assert.equal(
-                sanitizeForSheetCell(`${prefix}HYPERLINK("x")`),
-                `'${prefix}HYPERLINK("x")`,
-            );
+            assert.equal(asSheetText(`${prefix}HYPERLINK("x")`), `'${prefix}HYPERLINK("x")`);
         });
     }
-
-    it("leaves ordinary values untouched", () => {
-        assert.equal(sanitizeForSheetCell("Ada Lovelace"), "Ada Lovelace");
-        assert.equal(sanitizeForSheetCell(""), "");
-    });
 
     it("escapes formula payloads submitted through form fields", () => {
         const row = buildRow(submission({ name: "=1+1" }), turnstile, "2026-01-01T00:00:00.000Z");
 
         assert.equal(row[COLUMNS.indexOf("name")], "'=1+1");
+    });
+
+    it("leaves an empty value empty rather than a bare apostrophe", () => {
+        assert.equal(asSheetText(""), "");
+    });
+});
+
+describe("numeric-looking values", () => {
+    // USER_ENTERED parses values as though typed by hand, so every submitted
+    // field is marked as text or Sheets rewrites it.
+    const cases = [
+        ["a phone number with a leading zero", "02079460000"],
+        ["an international phone number", "+44 20 7946 0000"],
+        ["a scientific-notation-shaped id", "1E5"],
+        ["a date-shaped id", "3-4"],
+        ["a long numeric click id", "1234567890123456789"],
+    ];
+
+    for (const [label, value] of cases) {
+        it(`preserves ${label}`, () => {
+            assert.equal(asSheetText(value), `'${value}`);
+        });
+    }
+
+    it("preserves a leading-zero phone number written to the row", () => {
+        const row = buildRow(
+            submission({ phone: "02079460000" }),
+            turnstile,
+            "2026-01-01T00:00:00.000Z",
+        );
+
+        assert.equal(row[COLUMNS.indexOf("phone")], "'02079460000");
+    });
+
+    it("preserves a numeric click id written to the row", () => {
+        const row = buildRow(
+            submission({ gclid: "0123456789" }),
+            turnstile,
+            "2026-01-01T00:00:00.000Z",
+        );
+
+        assert.equal(row[COLUMNS.indexOf("gclid")], "'0123456789");
+    });
+
+    it("keeps an apostrophe the visitor typed", () => {
+        const row = buildRow(
+            submission({ name: "O'Brien" }),
+            turnstile,
+            "2026-01-01T00:00:00.000Z",
+        );
+
+        // The prefix is consumed by Sheets; the visitor's apostrophe survives.
+        assert.equal(row[COLUMNS.indexOf("name")], "'O'Brien");
     });
 });
 
@@ -56,11 +101,16 @@ describe("spreadsheet row shape", () => {
         const row = buildRow(submission(), turnstile, "2026-01-01T00:00:00.000Z");
 
         assert.equal(row.length, COLUMNS.length);
+        assert.equal(row[COLUMNS.indexOf("form_type")], "'contact");
+        assert.equal(row[COLUMNS.indexOf("source")], "'contact");
+        assert.equal(row[COLUMNS.indexOf("turnstile_status")], "'verified");
+        assert.equal(row[COLUMNS.indexOf("turnstile_hostname")], "'invaritech.ai");
+    });
+
+    it("leaves the generated timestamp parseable as a date", () => {
+        const row = buildRow(submission(), turnstile, "2026-01-01T00:00:00.000Z");
+
         assert.equal(row[COLUMNS.indexOf("timestamp")], "2026-01-01T00:00:00.000Z");
-        assert.equal(row[COLUMNS.indexOf("form_type")], "contact");
-        assert.equal(row[COLUMNS.indexOf("source")], "contact");
-        assert.equal(row[COLUMNS.indexOf("turnstile_status")], "verified");
-        assert.equal(row[COLUMNS.indexOf("turnstile_hostname")], "invaritech.ai");
     });
 
     it("keeps the columns owned by the resource form empty rather than absent", () => {
@@ -79,8 +129,8 @@ describe("spreadsheet row shape", () => {
             "2026-01-01T00:00:00.000Z",
         );
 
-        assert.equal(row[COLUMNS.indexOf("utm_campaign")], "spring");
-        assert.equal(row[COLUMNS.indexOf("gclid")], "abc123");
+        assert.equal(row[COLUMNS.indexOf("utm_campaign")], "'spring");
+        assert.equal(row[COLUMNS.indexOf("gclid")], "'abc123");
     });
 });
 
