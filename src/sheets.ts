@@ -108,6 +108,18 @@ export function scrubGoogleMessage(message: string, spreadsheetId?: string): str
     return spreadsheetId ? capped.split(spreadsheetId).join("[spreadsheet-id]") : capped;
 }
 
+/**
+ * Describe a thrown error for logging. A network failure, a DNS problem, or an
+ * AbortSignal timeout never reaches the response helpers below, so without this
+ * the only trace would be the caller's generic message.
+ */
+export function describeThrown(error: unknown): Record<string, unknown> {
+    if (error instanceof Error) {
+        return { name: error.name, message: error.message.slice(0, 200) };
+    }
+    return { name: "unknown", message: String(error).slice(0, 200) };
+}
+
 /** Read a failed Google response into loggable fields. Never includes tokens. */
 async function describeFailure(
     response: Response,
@@ -220,15 +232,21 @@ async function accessToken(env: Env): Promise<string> {
         new TextEncoder().encode(unsigned),
     );
 
-    const response = await fetch(TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-            grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            assertion: `${unsigned}.${base64url(new Uint8Array(signature))}`,
-        }).toString(),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    let response: Response;
+    try {
+        response = await fetch(TOKEN_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                assertion: `${unsigned}.${base64url(new Uint8Array(signature))}`,
+            }).toString(),
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+    } catch (error) {
+        console.error("sheets: token request did not complete", JSON.stringify(describeThrown(error)));
+        throw new Error("Google token request failed");
+    }
 
     if (!response.ok) {
         console.error("sheets: token exchange failed", JSON.stringify(await describeFailure(response)));
@@ -262,17 +280,26 @@ export async function appendLeadRow(
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}` +
         `/values/${range}:append?valueInputOption=${VALUE_INPUT_OPTION}&insertDataOption=INSERT_ROWS`;
 
-    const response = await fetch(url, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${await accessToken(env)}`,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            values: [buildRow(submission, turnstile, new Date().toISOString())],
-        }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${await accessToken(env)}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                values: [buildRow(submission, turnstile, new Date().toISOString())],
+            }),
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+    } catch (error) {
+        console.error(
+            "sheets: append request did not complete",
+            JSON.stringify({ ...describeThrown(error), sheetName }),
+        );
+        throw new Error("Sheets append request failed");
+    }
 
     if (!response.ok) {
         console.error(

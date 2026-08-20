@@ -3,6 +3,7 @@
 import { handleContact, handlePreflight } from "./handle-contact.ts";
 import { corsHeaders } from "./cors.ts";
 import type { Env } from "./env.ts";
+import { VERSION } from "./version.ts";
 
 const CONTACT_PATH = "/v1/contact";
 
@@ -33,7 +34,10 @@ export default {
         }
 
         if (pathname === "/" && request.method === "GET") {
-            return json({ name: "Invaritech Contact API", status: "ok", endpoint: "POST /v1/contact" }, 200);
+            return json(
+                { name: "Invaritech Contact API", status: "ok", version: VERSION, endpoint: "POST /v1/contact" },
+                200,
+            );
         }
 
         return json({ success: false, error: "Not found" }, 404);

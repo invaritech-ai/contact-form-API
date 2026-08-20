@@ -15,7 +15,9 @@ custom_domain = true
 
 # Non-secret configuration. Secrets are set with `wrangler secret put`.
 [vars]
-ALLOWED_ORIGINS = "https://invaritech.ai,https://www.invaritech.ai"
+# The pages.dev origin is the Cloudflare Pages preview of the website. Drop it
+# once the site is served from its own domain.
+ALLOWED_ORIGINS = "https://invaritech.ai,https://www.invaritech.ai,https://invaritech-website-next.pages.dev"
 CONTACT_NOTIFICATION_FROM = "Invaritech Website <website@notifications.invaritech.ai>"
 CONTACT_NOTIFICATION_TO = "hello@invaritech.ai"
 LEADS_SHEET_NAME = "Leads"
