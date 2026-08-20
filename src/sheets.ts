@@ -168,13 +168,18 @@ function encodeSegment(value: object): string {
  * with anything else outside the base64 alphabet.
  */
 export function pemToPkcs8(pem: string): ArrayBuffer {
-    const body = pem
-        .trim()
-        .replace(/^["']|["']$/g, "")
-        .replace(/\\n/g, "\n")
-        .replace(/-----BEGIN [^-]+-----/, "")
-        .replace(/-----END [^-]+-----/, "")
-        .replace(/[^A-Za-z0-9+/=]/g, "");
+    // Expand escaped newlines first: afterwards the "n" of a literal \\n would
+    // be indistinguishable from base64 payload.
+    const expanded = pem.replace(/\\n/g, "\n");
+
+    // Take only what sits between the PEM markers. This survives every way the
+    // value tends to arrive mangled — wrapped in quotes, carrying its own
+    // KEY=... prefix from a .env line, or padded with stray whitespace —
+    // because everything outside the markers is discarded rather than filtered.
+    const between = expanded.match(/-----BEGIN[^-]*-----([\s\S]*?)-----END/);
+
+    const body = (between ? between[1] : expanded).replace(/[^A-Za-z0-9+/=]/g, "");
+
     const binary = atob(body);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
