@@ -98,13 +98,16 @@ msclkid, li_fat_id, turnstile_status, turnstile_hostname
 `main_control_problem` belong to the resource form that shares this sheet and
 are written empty — they are kept so both forms stay column-aligned.
 
-Every submitted value is written with a leading apostrophe, which Sheets
-consumes as a "store this as text" marker rather than displaying. That stops
-formula injection (`=HYPERLINK(...)` stays inert text) and also stops silent
-coercion: without it, `USER_ENTERED` parses values as though typed by hand, so
-`02079460000` would lose its leading zero, `1E5` would become `100000`, and
-`3-4` could become a date. The generated `timestamp` column is the one
-exception — it is left parseable so the column remains a real date.
+Rows are written with `valueInputOption=RAW`, so Sheets stores every value
+exactly as submitted instead of parsing it as though typed into the grid. That
+is what keeps formulas inert — `=HYPERLINK(...)` is stored as text, never
+evaluated — and what stops silent coercion: `02079460000` keeps its leading
+zero, `1E5` stays `1E5`, and `3-4` does not become a date. Nothing is escaped,
+so cells read back exactly as the visitor typed them.
+
+One consequence: the `timestamp` column holds an ISO 8601 string rather than a
+native Sheets date. It still sorts correctly, being lexicographically ordered,
+but date-based formulas over that column need `DATEVALUE`.
 
 ## Local development
 
@@ -193,9 +196,9 @@ origin in `ALLOWED_ORIGINS`. No frontend code changes are needed.
 - **Client IP comes from `CF-Connecting-IP` only.** The edge sets it and a
   client cannot forge it, so it is safe as Turnstile's `remoteip`. Forwarded
   headers are deliberately ignored.
-- **Sheets values are forced to text.** See the spreadsheet section above:
-  `USER_ENTERED` would otherwise rewrite phone numbers and click IDs that
-  happen to look numeric.
+- **Sheets writes use `RAW`.** See the spreadsheet section above: `USER_ENTERED`
+  would evaluate formulas and rewrite phone numbers and click IDs that happen
+  to look numeric.
 - **The spreadsheet is the source of truth.** If the row is written but the
   notification email fails, the request still returns 201. Returning an error
   would invite a resubmission and duplicate the lead. The failure is logged.

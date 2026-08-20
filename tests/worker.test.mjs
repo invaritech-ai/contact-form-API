@@ -181,9 +181,17 @@ describe("google service-account auth", () => {
         assert.ok(signature.length > 0);
 
         assert.ok(requests[1].url.startsWith("https://sheets.googleapis.com/v4/spreadsheets/sheet-123"));
-        assert.ok(requests[1].url.includes("valueInputOption=USER_ENTERED"));
+        assert.ok(requests[1].url.includes("valueInputOption=RAW"));
         assert.equal(requests[1].init.headers.Authorization, "Bearer token-abc");
         assert.equal(JSON.parse(requests[1].init.body).values[0].length, COLUMNS.length);
+    });
+
+    it("writes with RAW so Sheets stores values unparsed", async () => {
+        // This is the formula-injection and numeric-coercion control.
+        await appendLeadRow(env(), submission(), { status: "verified", hostname: "" });
+
+        assert.ok(requests[1].url.includes("valueInputOption=RAW"));
+        assert.ok(!requests[1].url.includes("USER_ENTERED"));
     });
 
     it("bounds both upstream calls with an abort signal", async () => {

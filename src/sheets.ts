@@ -41,21 +41,16 @@ const TIMEOUT_MS = 10_000;
 const SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 /**
- * Force a value to be stored as text.
- *
- * `USER_ENTERED` makes Sheets parse each value as though it were typed by
- * hand, which both evaluates formulas and coerces anything number-shaped:
- * `02079460000` loses its leading zero, `1E5` becomes 100000, and `3-4` can
- * become a date. A leading apostrophe suppresses all of that. Sheets does not
- * display the apostrophe, and an apostrophe already present in the value is
- * preserved because only the prefix is consumed.
+ * Values are written with `valueInputOption=RAW`, which is the safety control
+ * for this sheet: Sheets stores each value exactly as given instead of parsing
+ * it as though typed into the grid. Formulas are therefore inert text, and
+ * nothing number-shaped is rewritten — `02079460000` keeps its leading zero,
+ * `1E5` stays `1E5`, and `3-4` does not become a date. No escaping is applied,
+ * so values appear in the sheet exactly as the visitor submitted them.
  */
-export function asSheetText(value: string): string {
-    if (!value) return "";
-    return `'${value}`;
-}
+const VALUE_INPUT_OPTION = "RAW";
 
-/** Build the row in COLUMNS order, with every cell sanitized. */
+/** Build the row in COLUMNS order. Values are written verbatim; see RAW above. */
 export function buildRow(
     submission: ContactSubmission,
     turnstile: TurnstileResult,
@@ -79,11 +74,7 @@ export function buildRow(
         turnstile_hostname: turnstile.hostname,
     };
 
-    // The timestamp is generated here, not submitted, and is left parseable so
-    // the column remains a real date for sorting and filtering.
-    return COLUMNS.map((column) =>
-        column === "timestamp" ? timestamp : asSheetText(values[column] ?? ""),
-    );
+    return COLUMNS.map((column) => values[column] ?? "");
 }
 
 /** 1-based column index to its A1 letter: 1 -> A, 27 -> AA, 35 -> AI. */
@@ -203,7 +194,7 @@ export async function appendLeadRow(
     const range = encodeURIComponent(`${quoteSheetName(sheetName)}!A:${LAST_COLUMN}`);
     const url =
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}` +
-        `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+        `/values/${range}:append?valueInputOption=${VALUE_INPUT_OPTION}&insertDataOption=INSERT_ROWS`;
 
     const response = await fetch(url, {
         method: "POST",
