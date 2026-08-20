@@ -183,6 +183,32 @@ The website reads its endpoint from `NEXT_PUBLIC_CONTACT_API_URL` at build
 time. Set it to `https://api.invaritech.ai/v1/contact` and keep the site's
 origin in `ALLOWED_ORIGINS`. No frontend code changes are needed.
 
+## Troubleshooting
+
+The Worker logs the reason a submission failed, with credentials, tokens, and
+submitted values excluded. Spreadsheet IDs are replaced with
+`[spreadsheet-id]` before any Google message is logged. Read them in the
+dashboard under **Observability**, or with `wrangler tail`.
+
+| Log line | Meaning | Fix |
+| --- | --- | --- |
+| `sheets: append failed` with `INVALID_ARGUMENT` and `Unable to parse range` | The tab named in `LEADS_SHEET_NAME` does not exist. The `range` and `sheetName` fields show what was attempted. | Set `LEADS_SHEET_NAME` to the exact tab name. Unset, it defaults to `Sheet1`. |
+| `sheets: append failed` with `NOT_FOUND` | `LEADS_SPREADSHEET_ID` points at a spreadsheet that does not exist, or one the service account cannot see. | Check the ID, and share the sheet with `GOOGLE_SHEETS_CLIENT_EMAIL` as Editor. |
+| `sheets: append failed` with `PERMISSION_DENIED` | The service account lacks access, or the Sheets API is disabled on its Google Cloud project. | Share the sheet as Editor; enable the Google Sheets API. |
+| `sheets: credentials missing` | `GOOGLE_SHEETS_CLIENT_EMAIL` or `GOOGLE_SHEETS_PRIVATE_KEY` is not set. The log reports which. | Set the missing secret. |
+| `sheets: LEADS_SPREADSHEET_ID is not set` | Self-explanatory. | Set the secret. |
+| `sheets: private key could not be parsed` | The PEM is malformed. The log reports its length and whether it starts with the PEM header and contains escaped or real newlines. | Re-paste the key as a single line with literal `\n` sequences. |
+| `sheets: token exchange failed` with `invalid_grant` | The private key does not match the service account, or the machine clock is far off. | Re-issue the service-account key. |
+| `contact: notification email failed` | Resend rejected the send. The row was still written and the caller still got a 201. | Check `RESEND_API_KEY` and that `CONTACT_NOTIFICATION_FROM` uses a Resend-verified domain. |
+
+A successful write logs `sheets: append ok` with the tab name.
+
+**Configuration precedence matters here.** Variables set in the Cloudflare
+dashboard and `[vars]` in `wrangler.toml` are not merged — a deploy that
+carries `[vars]` replaces the plain variables on the Worker. If the two
+disagree, the running Worker may not match this repository. Secrets are never
+touched by a deploy.
+
 ## Design notes
 
 - **No `googleapis`.** That client depends on Node built-ins and does not run

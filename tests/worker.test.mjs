@@ -10,10 +10,30 @@ import {
     pemToPkcs8,
     quoteSheetName,
     resetTokenCache,
+    scrubGoogleMessage,
 } from "../src/sheets.ts";
 import { parseSubmission } from "../src/fields.ts";
 
 const ENV = { ALLOWED_ORIGINS: "https://invaritech.ai" };
+
+/** Generated once and shared: RSA keygen is slow. */
+async function generatePrivateKeyPem() {
+    const pair = await crypto.subtle.generateKey(
+        {
+            name: "RSASSA-PKCS1-v1_5",
+            modulusLength: 2048,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: "SHA-256",
+        },
+        true,
+        ["sign", "verify"],
+    );
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", pair.privateKey);
+    const lines = Buffer.from(pkcs8).toString("base64").match(/.{1,64}/g).join("\n");
+    return `-----BEGIN PRIVATE KEY-----\n${lines}\n-----END PRIVATE KEY-----\n`;
+}
+
+const privateKeyPemForDiagnostics = await generatePrivateKeyPem();
 
 describe("router", () => {
     it("serves a health check at the root", async () => {
@@ -305,5 +325,92 @@ describe("sheet name quoting", () => {
     it("doubles embedded apostrophes", () => {
         assert.equal(quoteSheetName("O'Brien"), "'O''Brien'");
         assert.equal(quoteSheetName("a'b'c"), "'a''b''c'");
+    });
+});
+
+describe("failure diagnostics", () => {
+    const SPREADSHEET_ID = "1hUsQY-N2NGMSKgQIC0mYPozttyHBqL4JSuKrWOW88Ms";
+
+    it("replaces the spreadsheet id in a Google error message", () => {
+        const message = `Requested entity was not found: spreadsheets/${SPREADSHEET_ID}`;
+
+        const scrubbed = scrubGoogleMessage(message, SPREADSHEET_ID);
+
+        assert.ok(!scrubbed.includes(SPREADSHEET_ID));
+        assert.ok(scrubbed.includes("[spreadsheet-id]"));
+    });
+
+    it("caps an overlong message", () => {
+        assert.equal(scrubGoogleMessage("x".repeat(1000)).length, 300);
+    });
+
+    it("logs the Google error without leaking the id, token, or submitted data", async () => {
+        const realFetch = globalThis.fetch;
+        const realError = console.error;
+        const logged = [];
+        console.error = (...args) => logged.push(args.join(" "));
+
+        globalThis.fetch = async (url) => {
+            if (String(url).includes("oauth2.googleapis.com")) {
+                return new Response(
+                    JSON.stringify({ access_token: "super-secret-token", expires_in: 3600 }),
+                    { status: 200 },
+                );
+            }
+            return new Response(
+                JSON.stringify({
+                    error: {
+                        code: 400,
+                        status: "INVALID_ARGUMENT",
+                        message: `Unable to parse range: 'Sheet1'!A:AI in spreadsheets/${SPREADSHEET_ID}`,
+                    },
+                }),
+                { status: 400 },
+            );
+        };
+
+        const fd = new FormData();
+        fd.set("name", "Ada Lovelace");
+        fd.set("email", "ada@example.com");
+        fd.set("country", "United Kingdom");
+        fd.set("message", "Sensitive enquiry text");
+        fd.set("phone", "02079460000");
+        fd.set("cf_turnstile_token", "turnstile-token-value");
+        const parsed = parseSubmission(fd);
+
+        resetTokenCache();
+        await assert.rejects(() =>
+            appendLeadRow(
+                {
+                    GOOGLE_SHEETS_CLIENT_EMAIL: "svc@project.iam.gserviceaccount.com",
+                    GOOGLE_SHEETS_PRIVATE_KEY: privateKeyPemForDiagnostics,
+                    LEADS_SPREADSHEET_ID: SPREADSHEET_ID,
+                    LEADS_SHEET_NAME: "Leads",
+                },
+                parsed.submission,
+                { status: "verified", hostname: "invaritech.ai" },
+            ),
+        );
+
+        globalThis.fetch = realFetch;
+        console.error = realError;
+
+        const output = logged.join("\n");
+        assert.ok(output.includes("sheets: append failed"));
+        assert.ok(output.includes("INVALID_ARGUMENT"));
+        assert.ok(output.includes("[spreadsheet-id]"));
+        assert.ok(output.includes("Leads"));
+
+        for (const secret of [
+            SPREADSHEET_ID,
+            "super-secret-token",
+            "turnstile-token-value",
+            "ada@example.com",
+            "Ada Lovelace",
+            "Sensitive enquiry text",
+            "02079460000",
+        ]) {
+            assert.ok(!output.includes(secret), `leaked: ${secret}`);
+        }
     });
 });

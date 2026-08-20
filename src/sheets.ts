@@ -98,6 +98,45 @@ export function quoteSheetName(name: string): string {
     return `'${name.replace(/'/g, "''")}'`;
 }
 
+/**
+ * Google error bodies echo the spreadsheet ID back ("Requested entity was not
+ * found: spreadsheets/<id>"), so it is replaced before anything is logged.
+ * Messages are also capped, since they can carry the submitted range.
+ */
+export function scrubGoogleMessage(message: string, spreadsheetId?: string): string {
+    const capped = message.slice(0, 300);
+    return spreadsheetId ? capped.split(spreadsheetId).join("[spreadsheet-id]") : capped;
+}
+
+/** Read a failed Google response into loggable fields. Never includes tokens. */
+async function describeFailure(
+    response: Response,
+    spreadsheetId?: string,
+): Promise<Record<string, unknown>> {
+    let parsed: Record<string, unknown> = {};
+    try {
+        const body = (await response.json()) as {
+            error?: { code?: number; status?: string; message?: string } | string;
+            error_description?: string;
+        };
+        if (typeof body.error === "string") {
+            // Token endpoint shape: { error, error_description }
+            parsed = { error: body.error, description: body.error_description };
+        } else if (body.error) {
+            parsed = {
+                code: body.error.code,
+                status: body.error.status,
+                message: body.error.message
+                    ? scrubGoogleMessage(body.error.message, spreadsheetId)
+                    : undefined,
+            };
+        }
+    } catch {
+        parsed = { note: "response body was not JSON" };
+    }
+    return { httpStatus: response.status, ...parsed };
+}
+
 function base64url(bytes: Uint8Array): string {
     let binary = "";
     for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -129,6 +168,14 @@ async function accessToken(env: Env): Promise<string> {
     const privateKey = env.GOOGLE_SHEETS_PRIVATE_KEY;
 
     if (!clientEmail || !privateKey) {
+        // Presence only — neither value is ever logged.
+        console.error(
+            "sheets: credentials missing",
+            JSON.stringify({
+                clientEmailPresent: Boolean(clientEmail),
+                privateKeyPresent: Boolean(privateKey),
+            }),
+        );
         throw new Error("Google Sheets configuration missing");
     }
 
@@ -144,13 +191,29 @@ async function accessToken(env: Env): Promise<string> {
     };
     const unsigned = `${encodeSegment({ alg: "RS256", typ: "JWT" })}.${encodeSegment(claims)}`;
 
-    const key = await crypto.subtle.importKey(
-        "pkcs8",
-        pemToPkcs8(privateKey),
-        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-        false,
-        ["sign"],
-    );
+    let key: CryptoKey;
+    try {
+        key = await crypto.subtle.importKey(
+            "pkcs8",
+            pemToPkcs8(privateKey),
+            { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+            false,
+            ["sign"],
+        );
+    } catch {
+        // The usual cause is a value pasted with surrounding quotes, or with the
+        // \n escapes already expanded into real newlines by the secret store.
+        console.error(
+            "sheets: private key could not be parsed",
+            JSON.stringify({
+                length: privateKey.length,
+                startsWithPemHeader: privateKey.trimStart().startsWith("-----BEGIN"),
+                hasEscapedNewlines: privateKey.includes("\\n"),
+                hasRealNewlines: privateKey.includes("\n"),
+            }),
+        );
+        throw new Error("Google Sheets private key is not usable");
+    }
     const signature = await crypto.subtle.sign(
         "RSASSA-PKCS1-v1_5",
         key,
@@ -168,7 +231,7 @@ async function accessToken(env: Env): Promise<string> {
     });
 
     if (!response.ok) {
-        // Status only: the body can echo the client email back.
+        console.error("sheets: token exchange failed", JSON.stringify(await describeFailure(response)));
         throw new Error(`Google token endpoint responded with ${response.status}`);
     }
 
@@ -188,7 +251,10 @@ export async function appendLeadRow(
     turnstile: TurnstileResult,
 ): Promise<void> {
     const spreadsheetId = env.LEADS_SPREADSHEET_ID?.trim();
-    if (!spreadsheetId) throw new Error("Google Sheets configuration missing");
+    if (!spreadsheetId) {
+        console.error("sheets: LEADS_SPREADSHEET_ID is not set");
+        throw new Error("Google Sheets configuration missing");
+    }
 
     const sheetName = env.LEADS_SHEET_NAME?.trim() || "Sheet1";
     const range = encodeURIComponent(`${quoteSheetName(sheetName)}!A:${LAST_COLUMN}`);
@@ -209,8 +275,20 @@ export async function appendLeadRow(
     });
 
     if (!response.ok) {
+        console.error(
+            "sheets: append failed",
+            JSON.stringify({
+                ...(await describeFailure(response, spreadsheetId)),
+                sheetName,
+                range: `${quoteSheetName(sheetName)}!A:${LAST_COLUMN}`,
+                spreadsheetIdPresent: true,
+                spreadsheetIdLength: spreadsheetId.length,
+            }),
+        );
         throw new Error(`Sheets append responded with ${response.status}`);
     }
+
+    console.log("sheets: append ok", JSON.stringify({ httpStatus: response.status, sheetName }));
 }
 
 /** Test helper: clear the cached access token. */
