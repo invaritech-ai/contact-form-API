@@ -289,6 +289,40 @@ describe("google service-account auth", () => {
         );
     });
 
+    it("decodes a PEM key wrapped in double quotes, as secret stores receive it", () => {
+        // The exact production failure: the value was pasted from .env.local
+        // with its quotes, so it did not start with the PEM header.
+        assert.deepEqual(
+            new Uint8Array(pemToPkcs8(`"${privateKeyPem}"`)),
+            new Uint8Array(pemToPkcs8(privateKeyPem)),
+        );
+    });
+
+    it("decodes a PEM key wrapped in single quotes", () => {
+        assert.deepEqual(
+            new Uint8Array(pemToPkcs8(`'${privateKeyPem}'`)),
+            new Uint8Array(pemToPkcs8(privateKeyPem)),
+        );
+    });
+
+    it("decodes a PEM key with surrounding whitespace", () => {
+        assert.deepEqual(
+            new Uint8Array(pemToPkcs8(`\n  ${privateKeyPem}  \n`)),
+            new Uint8Array(pemToPkcs8(privateKeyPem)),
+        );
+    });
+
+    it("signs successfully with a quoted key, end to end", async () => {
+        await appendLeadRow(
+            { ...env(), GOOGLE_SHEETS_PRIVATE_KEY: `"${privateKeyPem}"` },
+            submission(),
+            { status: "verified", hostname: "" },
+        );
+
+        assert.equal(requests.length, 2);
+        assert.equal(requests[1].init.headers.Authorization, "Bearer token-abc");
+    });
+
     it("decodes a PEM key with literal escaped newlines", () => {
         const escaped = privateKeyPem.replace(/\n/g, "\\n");
 

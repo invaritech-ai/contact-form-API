@@ -159,13 +159,22 @@ function encodeSegment(value: object): string {
     return base64url(new TextEncoder().encode(JSON.stringify(value)));
 }
 
-/** Decode a PEM private key into the DER bytes `importKey` expects. */
+/**
+ * Decode a PEM private key into the DER bytes `importKey` expects.
+ *
+ * Tolerant of how the value tends to arrive. Secret stores are routinely fed
+ * the quoted form copied out of a .env file, and workerd's `atob` rejects the
+ * stray quote where Node's accepts it — so the wrapper is stripped here, along
+ * with anything else outside the base64 alphabet.
+ */
 export function pemToPkcs8(pem: string): ArrayBuffer {
     const body = pem
+        .trim()
+        .replace(/^["']|["']$/g, "")
         .replace(/\\n/g, "\n")
         .replace(/-----BEGIN [^-]+-----/, "")
         .replace(/-----END [^-]+-----/, "")
-        .replace(/\s+/g, "");
+        .replace(/[^A-Za-z0-9+/=]/g, "");
     const binary = atob(body);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);

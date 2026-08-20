@@ -3,4 +3,4 @@
  * confirm is actually running — a deploy that silently did not happen is
  * otherwise indistinguishable from a code path that did not fire.
  */
-export const VERSION = "2026-08-20.2-sheets-diagnostics";
+export const VERSION = "2026-08-20.3-pem-tolerant";
