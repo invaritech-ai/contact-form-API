@@ -1,0 +1,29 @@
+name = "invaritech-contact-api"
+main = "src/index.ts"
+compatibility_date = "2026-08-20"
+
+# Keep the workers.dev URL available for smoke tests before DNS is switched.
+workers_dev = true
+
+# Custom domain. Cloudflare provisions the DNS record and certificate, provided
+# the invaritech.ai zone lives in the same account as this Worker. If the first
+# deploy fails on this, comment the block out, deploy to workers.dev, then add
+# the zone to this account and restore it.
+[[routes]]
+pattern = "api.invaritech.ai"
+custom_domain = true
+
+# Non-secret configuration. Secrets are set with `wrangler secret put`.
+[vars]
+ALLOWED_ORIGINS = "https://invaritech.ai,https://www.invaritech.ai"
+CONTACT_NOTIFICATION_FROM = "Invaritech Website <website@invaritech.ai>"
+CONTACT_NOTIFICATION_TO = "hello@invaritech.ai"
+LEADS_SHEET_NAME = "Sheet1"
+MAX_BODY_BYTES = "100000"
+
+# Account-wide rate limiting, enforced at the edge rather than per isolate.
+# `period` accepts 10 or 60 seconds only.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }

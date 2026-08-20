@@ -1,5 +1,6 @@
 import { ATTRIBUTION_FIELDS, type ContactSubmission } from "./fields.ts";
 import type { TurnstileResult } from "./turnstile.ts";
+import type { Env } from "./env.ts";
 
 /** Escape every user-supplied value before it enters the HTML email body. */
 export function escapeHtml(value: string): string {
@@ -57,12 +58,13 @@ export function buildEmailHtml(
  * credential are deliberately absent from the payload.
  */
 export async function sendNotification(
+    env: Env,
     submission: ContactSubmission,
     turnstile: TurnstileResult,
 ): Promise<void> {
-    const apiKey = process.env.RESEND_API_KEY?.trim();
-    const from = process.env.CONTACT_NOTIFICATION_FROM?.trim();
-    const to = (process.env.CONTACT_NOTIFICATION_TO ?? "")
+    const apiKey = env.RESEND_API_KEY?.trim();
+    const from = env.CONTACT_NOTIFICATION_FROM?.trim();
+    const to = (env.CONTACT_NOTIFICATION_TO ?? "")
         .split(",")
         .map((address) => address.trim())
         .filter(Boolean);

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildRow, COLUMNS, sanitizeForSheetCell } from "../lib/sheets.ts";
-import { buildEmailHtml, escapeHtml } from "../lib/email.ts";
-import { clean, parseSubmission } from "../lib/fields.ts";
+import { buildRow, COLUMNS, sanitizeForSheetCell } from "../src/sheets.ts";
+import { buildEmailHtml, escapeHtml } from "../src/email.ts";
+import { clean, parseSubmission } from "../src/fields.ts";
 
 const turnstile = { status: "verified", hostname: "invaritech.ai" };
 

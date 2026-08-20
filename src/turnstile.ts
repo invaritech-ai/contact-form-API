@@ -1,5 +1,7 @@
 /** Cloudflare Turnstile server-side verification. */
 
+import type { Env } from "./env.ts";
+
 export interface TurnstileResult {
     status: "verified" | "failed" | "unavailable";
     hostname: string;
@@ -10,25 +12,19 @@ const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverif
 /**
  * Client IP for Turnstile's optional `remoteip`.
  *
- * Only headers the hosting platform itself sets are trusted. `x-forwarded-for`
- * is included because Vercel overwrites it at the edge; on a platform that
- * merely forwards a client-supplied value, drop it from this list.
+ * On Workers, `CF-Connecting-IP` is set by the edge and cannot be spoofed by
+ * the client, so it is the only header trusted here.
  */
 export function clientIp(headers: Headers): string {
-    const candidates = [
-        headers.get("cf-connecting-ip"),
-        headers.get("x-real-ip"),
-        headers.get("x-forwarded-for")?.split(",")[0],
-    ];
-    for (const candidate of candidates) {
-        const ip = candidate?.trim();
-        if (ip) return ip;
-    }
-    return "";
+    return headers.get("cf-connecting-ip")?.trim() ?? "";
 }
 
-export async function verifyTurnstile(token: string, ip: string): Promise<TurnstileResult> {
-    const secret = process.env.TURNSTILE_SECRET_KEY?.trim();
+export async function verifyTurnstile(
+    env: Env,
+    token: string,
+    ip: string,
+): Promise<TurnstileResult> {
+    const secret = env.TURNSTILE_SECRET_KEY?.trim();
     if (!secret) {
         console.error("turnstile: TURNSTILE_SECRET_KEY is not configured");
         return { status: "unavailable", hostname: "" };

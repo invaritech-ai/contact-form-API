@@ -1,9 +1,9 @@
 # Invaritech Contact API
 
-A single synchronous HTTP endpoint for the invaritech.ai contact form. It
-verifies Cloudflare Turnstile, appends a row to the leads spreadsheet, and
-sends a notification email through Resend. There is no database, queue, or
-background worker.
+A single Cloudflare Worker serving the invaritech.ai contact form. It verifies
+Cloudflare Turnstile, appends a row to the leads spreadsheet, and sends a
+notification email through Resend. No framework, no dependencies at runtime, no
+database or queue.
 
 ## Endpoint
 
@@ -31,10 +31,13 @@ Every response is JSON, including unexpected failures.
 | 201 | `{"success":true}` | Row appended |
 | 400 | `{"success":false,"error":"Invalid form submission."}` | Body is not valid multipart |
 | 403 | `{"success":false,"error":"Origin not allowed"}` | `Origin` not in `ALLOWED_ORIGINS` |
+| 404 / 405 | `{"success":false,"error":"..."}` | Unknown path, or wrong method |
 | 413 | `{"success":false,"error":"Request too large."}` | Body exceeds `MAX_BODY_BYTES` |
 | 422 | `{"success":false,"error":"..."}` | Field validation or Turnstile rejection |
 | 429 | `{"success":false,"error":"Too many requests. Please try again later."}` | Rate limit |
 | 500 / 503 | `{"success":false,"error":"Unable to send your message. Please try again."}` | Provider or unexpected failure |
+
+`GET /` returns a health check.
 
 Error messages are fixed, user-facing strings. Provider errors, spreadsheet
 identifiers, and stack traces are never returned. Logs record failure points
@@ -43,7 +46,7 @@ only — never form contents, email addresses, phone numbers, or messages.
 ### Example request
 
 ```bash
-curl -i -X POST https://YOUR-DEPLOYMENT/v1/contact \
+curl -i -X POST https://api.invaritech.ai/v1/contact \
   -H "Origin: https://invaritech.ai" \
   -H "Accept: application/json" \
   -F "name=Ada Lovelace" \
@@ -56,29 +59,30 @@ curl -i -X POST https://YOUR-DEPLOYMENT/v1/contact \
   -F "cf_turnstile_token=THE_TOKEN_FROM_THE_WIDGET"
 ```
 
-## Environment variables
+## Configuration
 
-Every value is read from the runtime environment; nothing is committed. See
-[.env.example](.env.example) for the annotated template.
+Five secrets, set with `wrangler secret put NAME`:
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `TURNSTILE_SECRET_KEY` | yes | Turnstile siteverify secret. Unset means every submission is refused with 503. |
-| `GOOGLE_SHEETS_CLIENT_EMAIL` | yes | Service account with Editor access to the spreadsheet. |
-| `GOOGLE_SHEETS_PRIVATE_KEY` | yes | Service-account PEM key. Literal `\n` sequences are expanded at runtime. |
-| `LEADS_SPREADSHEET_ID` | yes | ID from the spreadsheet URL. |
-| `LEADS_SHEET_NAME` | no | Tab name. Defaults to `Sheet1`. |
-| `RESEND_API_KEY` | yes | Resend API key with send permission. |
-| `CONTACT_NOTIFICATION_FROM` | yes | Sender address on a Resend-verified domain. |
-| `CONTACT_NOTIFICATION_TO` | yes | Recipient(s), comma-separated. |
-| `ALLOWED_ORIGINS` | yes | Comma-separated browser origins, exact match, no trailing slash. |
-| `RATE_LIMIT_MAX` | no | Requests per window per IP. Defaults to `5`. |
-| `RATE_LIMIT_WINDOW_SECONDS` | no | Window length. Defaults to `60`. |
-| `MAX_BODY_BYTES` | no | Request body ceiling. Defaults to `100000`. |
+| Secret | Purpose |
+| --- | --- |
+| `TURNSTILE_SECRET_KEY` | Turnstile siteverify secret. Unset means every submission is refused with 503. |
+| `GOOGLE_SHEETS_CLIENT_EMAIL` | Service account with Editor access to the spreadsheet. |
+| `GOOGLE_SHEETS_PRIVATE_KEY` | Service-account PEM key. Literal `\n` sequences are expanded before import. |
+| `LEADS_SPREADSHEET_ID` | ID from the spreadsheet URL. |
+| `RESEND_API_KEY` | Resend API key with send permission. |
+
+Everything else is non-secret and lives in `[vars]` in
+[wrangler.toml](wrangler.toml): `ALLOWED_ORIGINS`,
+`CONTACT_NOTIFICATION_FROM`, `CONTACT_NOTIFICATION_TO`, `LEADS_SHEET_NAME`,
+`MAX_BODY_BYTES`. Rate limiting is the `[[ratelimits]]` binding, currently
+5 requests per 60 seconds per client IP.
+
+For local development, put everything in `.env.local` instead — see
+[.env.example](.env.example).
 
 ## Spreadsheet layout
 
-The service appends to the first empty row. The sheet's header row must match
+The Worker appends to the first empty row. The sheet's header row must match
 this order exactly — a mismatch shifts values into the wrong columns:
 
 ```
@@ -102,42 +106,63 @@ Google Sheets stores them as text rather than evaluating them as formulas.
 ```bash
 npm install
 cp .env.example .env.local   # then fill in real values
-npm run dev                  # http://localhost:3000
+npx wrangler dev             # http://127.0.0.1:8787
 ```
 
-Verify without any credentials configured — validation and CORS do not touch a
-provider:
+`wrangler dev` runs the real workerd runtime, so local behaviour matches
+production. Verify without configuring anything — validation and CORS never
+reach a provider:
 
 ```bash
-curl -s -X POST http://localhost:3000/v1/contact \
+curl -s -X POST http://127.0.0.1:8787/v1/contact \
   -H "Origin: https://invaritech.ai" \
   -F name=Ada -F email=not-an-email -F country=UK -F message=hi -F cf_turnstile_token=x
 ```
 
 That returns `422` with `Please enter a valid email address`. A fully valid
-submission returns `503` until `TURNSTILE_SECRET_KEY` is set, because
-verification cannot be performed. Set `ALLOWED_ORIGINS` to include
-`http://localhost:3000` when testing from a local browser.
+submission returns `503` until `TURNSTILE_SECRET_KEY` is set, and `422` once it
+is, because a hand-made token cannot pass siteverify. To exercise the
+spreadsheet and email path end to end, temporarily set `TURNSTILE_SECRET_KEY`
+to Cloudflare's always-passing test secret,
+`1x0000000000000000000000000000000AA` — note that this writes a real row and
+sends a real email.
 
 ### Checks
 
 ```bash
-npm test        # 40 tests, no network access required
+npm test          # 55 tests, no network access required
 npm run typecheck
-npm run build
 ```
 
 ## Deployment
 
-Any Node runtime that supports Next.js route handlers works. The repository is
-configured for Vercel.
+```bash
+npx wrangler login
+npx wrangler secret put TURNSTILE_SECRET_KEY
+npx wrangler secret put GOOGLE_SHEETS_CLIENT_EMAIL
+npx wrangler secret put GOOGLE_SHEETS_PRIVATE_KEY
+npx wrangler secret put LEADS_SPREADSHEET_ID
+npx wrangler secret put RESEND_API_KEY
+npm run deploy
+```
 
-1. `npx vercel link` (first time only).
-2. Add every required variable above to the Production environment, via the
-   Vercel dashboard or `npx vercel env add <NAME> production`.
-3. `npx vercel deploy --prod`.
-4. Confirm the deployment: `curl https://YOUR-DEPLOYMENT/` returns
-   `{"name":"Invaritech Contact API","status":"ok",...}`.
+Confirm the deployment:
+
+```bash
+curl https://api.invaritech.ai/
+```
+
+### Domain
+
+`wrangler.toml` declares `api.invaritech.ai` as a Custom Domain. On deploy,
+Cloudflare creates the DNS record and issues the certificate automatically,
+provided the `invaritech.ai` zone is in the same account as the Worker — the
+zone already uses Cloudflare nameservers, so this is a matter of account
+placement, not a DNS migration.
+
+If the first deploy fails on the route, comment out the `[[routes]]` block,
+deploy to the `workers.dev` URL, move the zone into this account, then restore
+the block and redeploy.
 
 Before going live, check that the service account has Editor access to the
 spreadsheet, and that `CONTACT_NOTIFICATION_FROM` uses a domain verified in
@@ -147,25 +172,25 @@ notifications.
 ### Connecting the website
 
 The website reads its endpoint from `NEXT_PUBLIC_CONTACT_API_URL` at build
-time. Set it to the full URL, e.g. `https://YOUR-DEPLOYMENT/v1/contact`, and
-add the site's origin to `ALLOWED_ORIGINS` here. No frontend code changes are
-needed.
+time. Set it to `https://api.invaritech.ai/v1/contact` and keep the site's
+origin in `ALLOWED_ORIGINS`. No frontend code changes are needed.
 
 ## Design notes
 
-- **Turnstile is the primary abuse control.** Rate limiting is in-memory and
-  per-instance, so a serverless deployment with N warm instances allows up to
-  N times `RATE_LIMIT_MAX`. Making it exact would require shared state, which
-  this service deliberately does not have.
+- **No `googleapis`.** That client depends on Node built-ins and does not run
+  on Workers. `src/sheets.ts` signs the service-account JWT with WebCrypto
+  (`RSASSA-PKCS1-v1_5` over an imported PKCS#8 key), exchanges it for an access
+  token, and calls the Sheets REST API. The token is cached per isolate and
+  refreshed a minute before expiry.
+- **Rate limiting is enforced at the edge** by Cloudflare's rate limiting
+  binding, not by per-instance counters. `src/rate-limit.ts` keeps a small
+  in-memory fallback for tests and for `wrangler dev` runs without the binding.
+- **Client IP comes from `CF-Connecting-IP` only.** The edge sets it and a
+  client cannot forge it, so it is safe as Turnstile's `remoteip`. Forwarded
+  headers are deliberately ignored.
 - **The spreadsheet is the source of truth.** If the row is written but the
   notification email fails, the request still returns 201. Returning an error
-  would invite a resubmission and duplicate the lead. The email failure is
-  logged.
-- **`lib/handle-contact.ts` depends only on Web-standard `Request`/`Response`**
-  and takes its provider calls as injected dependencies. That keeps the tests
-  free of network access and makes a move to another runtime a matter of
-  replacing the route wrapper.
-- **Client IP** for Turnstile's `remoteip` is read from `cf-connecting-ip`,
-  `x-real-ip`, then the first `x-forwarded-for` entry. On a host that forwards
-  a client-supplied `x-forwarded-for` without overwriting it, remove that
-  fallback in `lib/turnstile.ts`.
+  would invite a resubmission and duplicate the lead. The failure is logged.
+- **`src/handle-contact.ts` takes its provider calls as injected dependencies**
+  and uses only Web-standard `Request`/`Response`, so the tests need no network
+  and the logic is not coupled to Workers.
