@@ -1,25 +1,21 @@
 {
     "name": "invaritech-contact-api",
-    "version": "1.0.0",
-    "description": "Contact form API for Invaritech website",
-    "main": "index.js",
+    "version": "2.0.0",
+    "description": "Contact form endpoint for invaritech.ai, running on Cloudflare Workers",
+    "private": true,
+    "type": "module",
     "scripts": {
-        "dev": "next dev",
-        "build": "next build",
-        "start": "next start",
-        "lint": "next lint"
-    },
-    "dependencies": {
-        "googleapis": "^171.4.0",
-        "next": "^16.1.6"
+        "start": "wrangler dev",
+        "deploy": "wrangler deploy",
+        "typecheck": "tsc --noEmit",
+        "test": "node --experimental-strip-types --test tests/*.test.mjs"
     },
     "devDependencies": {
-        "@types/node": "^20",
-        "@types/react": "^19.2.14",
-        "@types/react-dom": "^19.2.3",
-        "typescript": "^5"
+        "@cloudflare/workers-types": "^5.20260815.1",
+        "typescript": "^5",
+        "wrangler": "^4"
     },
     "engines": {
-        "node": ">=18"
+        "node": ">=22.6.0"
     }
 }

@@ -7,7 +7,6 @@
 .kiro/steering/byterover-rules.md
 .qoder/rules/byterover-rules.md
 .augment/rules/byterover-rules.md
-.next
 
 node_modules
 .env
@@ -19,3 +18,8 @@ node_modules
 .env.test
 .env.production
 tsconfig.tsbuildinfo
+
+# Cloudflare Workers local state
+.wrangler
+.dev.vars
+.dev.vars.*
