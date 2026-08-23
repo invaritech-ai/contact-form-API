@@ -17,7 +17,7 @@ custom_domain = true
 [vars]
 # The pages.dev origin is the Cloudflare Pages preview of the website. Drop it
 # once the site is served from its own domain.
-ALLOWED_ORIGINS = "https://invaritech.ai,https://www.invaritech.ai,https://invaritech-website-next.pages.dev"
+ALLOWED_ORIGINS = "https://invaritech.ai,https://www.invaritech.ai,https://invaritech-website-next.pages.dev,https://claims-desk.invaritech.ai"
 CONTACT_NOTIFICATION_FROM = "Invaritech Website <website@notifications.invaritech.ai>"
 CONTACT_NOTIFICATION_TO = "hello@invaritech.ai"
 LEADS_SHEET_NAME = "Leads"
