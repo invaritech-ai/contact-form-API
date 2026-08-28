@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { buildRow, COLUMNS } from "../src/sheets.ts";
 import { buildEmailHtml, escapeHtml } from "../src/email.ts";
-import { clean, parseSubmission } from "../src/fields.ts";
+import { clean, parseInvoiceInterest, parseSubmission } from "../src/fields.ts";
 
 const turnstile = { status: "verified", hostname: "invaritech.ai" };
 
@@ -109,6 +109,22 @@ describe("spreadsheet row shape", () => {
 
         assert.equal(row[COLUMNS.indexOf("utm_campaign")], "spring");
         assert.equal(row[COLUMNS.indexOf("gclid")], "abc123");
+    });
+
+    it("identifies invoice interest without changing the shared sheet shape", () => {
+        const data = new FormData();
+        data.set("email", "finance@example.com");
+        data.set("interest", "three_way_matching");
+        data.set("cf_turnstile_token", "token");
+        const parsed = parseInvoiceInterest(data, "HK");
+        assert.equal(parsed.ok, true);
+
+        const row = buildRow(parsed.submission, turnstile, "2026-01-01T00:00:00.000Z");
+        assert.equal(row.length, COLUMNS.length);
+        assert.equal(row[COLUMNS.indexOf("form_type")], "invoice_interest");
+        assert.equal(row[COLUMNS.indexOf("source")], "three_way_matching");
+        assert.equal(row[COLUMNS.indexOf("email")], "finance@example.com");
+        assert.equal(row[COLUMNS.indexOf("country")], "HK");
     });
 });
 

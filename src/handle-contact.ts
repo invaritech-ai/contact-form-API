@@ -6,7 +6,12 @@
  */
 
 import { corsHeaders, isOriginAllowed } from "./cors.ts";
-import { parseSubmission, type ContactSubmission } from "./fields.ts";
+import {
+    parseInvoiceInterest,
+    parseSubmission,
+    type ContactSubmission,
+    type ParseResult,
+} from "./fields.ts";
 import { checkRateLimit } from "./rate-limit.ts";
 import { clientIp, verifyTurnstile, type TurnstileResult } from "./turnstile.ts";
 import { appendLeadRow } from "./sheets.ts";
@@ -35,6 +40,8 @@ export const defaultDeps: ContactDeps = {
     sendNotification,
     checkRateLimit,
 };
+
+type SubmissionParser = (form: FormData, request: Request) => ParseResult;
 
 const GENERIC_ERROR = "Unable to send your message. Please try again.";
 const DEFAULT_MAX_BODY_BYTES = 100_000;
@@ -70,10 +77,11 @@ export function handlePreflight(request: Request, env: Env): Response {
     return new Response(null, { status: 204, headers: corsHeaders(env, origin) });
 }
 
-export async function handleContact(
+async function handleSubmission(
     request: Request,
     env: Env,
-    deps: ContactDeps = defaultDeps,
+    deps: ContactDeps,
+    parse: SubmissionParser,
 ): Promise<Response> {
     const origin = request.headers.get("origin");
 
@@ -100,7 +108,7 @@ export async function handleContact(
                 : json(env, { success: false, error: "Invalid form submission." }, 400, origin);
         }
 
-        const parsed = parseSubmission(body.form);
+        const parsed = parse(body.form, request);
         if (!parsed.ok) {
             return json(env, { success: false, error: parsed.error }, 422, origin);
         }
@@ -140,4 +148,22 @@ export async function handleContact(
         console.error("contact: unexpected failure");
         return json(env, { success: false, error: GENERIC_ERROR }, 500, origin);
     }
+}
+
+export function handleContact(
+    request: Request,
+    env: Env,
+    deps: ContactDeps = defaultDeps,
+): Promise<Response> {
+    return handleSubmission(request, env, deps, (form) => parseSubmission(form));
+}
+
+export function handleInvoiceInterest(
+    request: Request,
+    env: Env,
+    deps: ContactDeps = defaultDeps,
+): Promise<Response> {
+    return handleSubmission(request, env, deps, (form, currentRequest) =>
+        parseInvoiceInterest(form, currentRequest.headers.get("cf-ipcountry")),
+    );
 }

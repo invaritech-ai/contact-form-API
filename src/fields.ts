@@ -32,8 +32,11 @@ export const ATTRIBUTION_FIELDS = [
 
 export type AttributionField = (typeof ATTRIBUTION_FIELDS)[number];
 export type Attribution = Record<AttributionField, string>;
+export type InvoiceInterest = "invoice_pipeline" | "three_way_matching";
 
 export interface ContactSubmission {
+    formType: "contact" | "invoice_interest";
+    source: "contact" | InvoiceInterest;
     name: string;
     email: string;
     phone: string;
@@ -98,6 +101,69 @@ export function parseSubmission(form: FormData): ParseResult {
 
     return {
         ok: true,
-        submission: { name, email, phone, company, country, message, turnstileToken, attribution },
+        submission: {
+            formType: "contact",
+            source: "contact",
+            name,
+            email,
+            phone,
+            company,
+            country,
+            message,
+            turnstileToken,
+            attribution,
+        },
+    };
+}
+
+const INTEREST_COPY: Record<InvoiceInterest, { name: string; message: string }> = {
+    invoice_pipeline: {
+        name: "Invoice pipeline interest",
+        message:
+            "Interested in invoice intake from email and approved posting to accounting software such as Xero.",
+    },
+    three_way_matching: {
+        name: "Matching workflow interest",
+        message:
+            "Interested in account-required matching, reconciliation, and exception workflows for invoices, purchase orders, and bank statements.",
+    },
+};
+
+export function parseInvoiceInterest(form: FormData, edgeCountry: string | null): ParseResult {
+    const email = clean(form.get("email"), LIMITS.email);
+    const interest = clean(form.get("interest"), 40) as InvoiceInterest;
+    const turnstileToken = clean(form.get("cf_turnstile_token"), LIMITS.token);
+
+    if (!email) return { ok: false, error: "Email is required" };
+    if (!EMAIL_RE.test(email)) {
+        return { ok: false, error: "Please enter a valid email address" };
+    }
+    if (!Object.hasOwn(INTEREST_COPY, interest)) {
+        return { ok: false, error: "Please choose an interest" };
+    }
+    if (!turnstileToken) {
+        return { ok: false, error: "Please complete the verification" };
+    }
+
+    const attribution = {} as Attribution;
+    for (const field of ATTRIBUTION_FIELDS) {
+        attribution[field] = clean(form.get(field), LIMITS.attribution);
+    }
+
+    const copy = INTEREST_COPY[interest];
+    return {
+        ok: true,
+        submission: {
+            formType: "invoice_interest",
+            source: interest,
+            name: copy.name,
+            email,
+            phone: "",
+            company: "",
+            country: clean(edgeCountry, LIMITS.country) || "Unknown",
+            message: copy.message,
+            turnstileToken,
+            attribution,
+        },
     };
 }

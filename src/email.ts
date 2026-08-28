@@ -44,7 +44,11 @@ export function buildEmailHtml(
 
     return [
         '<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5">',
-        "<h2 style=\"font-size:16px;margin:0 0 12px\">New contact form submission</h2>",
+        `<h2 style="font-size:16px;margin:0 0 12px">${
+            submission.formType === "invoice_interest"
+                ? "New invoice workflow interest"
+                : "New contact form submission"
+        }</h2>`,
         `<table cellspacing="0" cellpadding="0">${contactRows}</table>`,
         attributionRows
             ? `<h3 style="font-size:14px;margin:20px 0 8px;color:#666">Attribution</h3><table cellspacing="0" cellpadding="0">${attributionRows}</table>`
@@ -86,7 +90,10 @@ export async function sendNotification(
             from,
             to,
             reply_to: submission.email,
-            subject: `New contact form submission from ${submission.name}`,
+            subject:
+                submission.formType === "invoice_interest"
+                    ? `New invoice workflow lead: ${submission.source}`
+                    : `New contact form submission from ${submission.name}`,
             html: buildEmailHtml(submission, turnstile),
         }),
         signal: AbortSignal.timeout(TIMEOUT_MS),

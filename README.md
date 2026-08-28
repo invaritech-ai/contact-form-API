@@ -24,6 +24,18 @@ Accept: application/json
 `utm_marketing_tactic`, `gclid`, `gbraid`, `wbraid`, `fbclid`, `msclkid`,
 `li_fat_id`
 
+The invoice extractor uses a second, email-only endpoint backed by the same
+Turnstile, rate limit, spreadsheet, and notification pipeline:
+
+```
+POST /v1/invoice-interest
+```
+
+Required fields are `email`, `interest`, and `cf_turnstile_token`. `interest`
+must be `invoice_pipeline` or `three_way_matching`. The Worker derives country
+from Cloudflare and writes fixed intent copy; it does not accept a visitor
+message or any invoice, filename, or batch identifier.
+
 Every response is JSON, including unexpected failures.
 
 | Status | Body | When |
@@ -94,7 +106,8 @@ utm_creative_format, utm_marketing_tactic, gclid, gbraid, wbraid, fbclid,
 msclkid, li_fat_id, turnstile_status, turnstile_hostname
 ```
 
-`form_type` and `source` are always `contact`. `role`, `industry`, and
+For the contact form, `form_type` and `source` are `contact`. Invoice-interest
+rows use `invoice_interest` and the selected interest code. `role`, `industry`, and
 `main_control_problem` belong to the resource form that shares this sheet and
 are written empty — they are kept so both forms stay column-aligned.
 

@@ -58,8 +58,8 @@ export function buildRow(
 ): string[] {
     const values: Record<string, string> = {
         timestamp,
-        form_type: "contact",
-        source: "contact",
+        form_type: submission.formType,
+        source: submission.source,
         name: submission.name,
         email: submission.email,
         company: submission.company,

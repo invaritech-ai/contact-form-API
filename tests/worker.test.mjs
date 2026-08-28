@@ -77,6 +77,16 @@ describe("router", () => {
             "https://invaritech.ai",
         );
     });
+
+    it("exposes the invoice-interest route with the same method contract", async () => {
+        const response = await worker.fetch(
+            new Request("https://api.invaritech.ai/v1/invoice-interest", { method: "GET" }),
+            ENV,
+        );
+
+        assert.equal(response.status, 405);
+        assert.equal(response.headers.get("allow"), "POST, OPTIONS");
+    });
 });
 
 describe("rate limiting", () => {
