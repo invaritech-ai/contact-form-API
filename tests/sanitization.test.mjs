@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { buildRow, COLUMNS } from "../src/sheets.ts";
-import { buildEmailHtml, escapeHtml } from "../src/email.ts";
+import { buildEmailHtml, escapeHtml, shortClientRef } from "../src/email.ts";
 import { clean, parseInvoiceInterest, parseSubmission } from "../src/fields.ts";
 
 const turnstile = { status: "verified", hostname: "invaritech.ai" };
@@ -74,10 +74,10 @@ describe("numeric-looking values", () => {
 });
 
 describe("spreadsheet row shape", () => {
-    it("matches the 35-column header row the live sheet uses", () => {
+    it("matches the 36-column header row the live sheet uses", () => {
         // Pinned deliberately: the sheet is shared with the resource form, and a
         // changed count here means the sheet's header row must change with it.
-        assert.equal(COLUMNS.length, 35);
+        assert.equal(COLUMNS.length, 36);
     });
 
     it("emits one cell per column, in column order", () => {
@@ -115,6 +115,7 @@ describe("spreadsheet row shape", () => {
         const data = new FormData();
         data.set("email", "finance@example.com");
         data.set("interest", "three_way_matching");
+        data.set("client_ref", "73969443-f5a7-4f35-a4be-18dc9127c685");
         data.set("cf_turnstile_token", "token");
         const parsed = parseInvoiceInterest(data, "HK");
         assert.equal(parsed.ok, true);
@@ -125,10 +126,14 @@ describe("spreadsheet row shape", () => {
         assert.equal(row[COLUMNS.indexOf("source")], "three_way_matching");
         assert.equal(row[COLUMNS.indexOf("email")], "finance@example.com");
         assert.equal(row[COLUMNS.indexOf("country")], "HK");
+        assert.equal(row[COLUMNS.indexOf("client_ref")], "73969443-f5a7-4f35-a4be-18dc9127c685");
     });
 });
 
 describe("email escaping", () => {
+    it("shortens the browser reference for notifications", () => {
+        assert.equal(shortClientRef("73969443-f5a7-4f35-a4be-18dc9127c685"), "73969…c685");
+    });
     it("escapes HTML metacharacters", () => {
         assert.equal(
             escapeHtml('<script>alert("x")</script>'),

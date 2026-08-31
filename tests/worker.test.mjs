@@ -352,7 +352,7 @@ describe("column letters", () => {
     });
 
     it("covers every column the sheet writes", () => {
-        assert.equal(columnLetter(COLUMNS.length), "AI");
+        assert.equal(columnLetter(COLUMNS.length), "AJ");
     });
 });
 

@@ -12,6 +12,7 @@ function form(overrides = {}) {
     const fields = {
         email: "finance@example.com",
         interest: "invoice_pipeline",
+        client_ref: "73969443-f5a7-4f35-a4be-18dc9127c685",
         cf_turnstile_token: "token-value",
         utm_source: "invoice-extractor",
         ...overrides,
@@ -70,6 +71,7 @@ describe("invoice interest submissions", () => {
         assert.equal(submission.formType, "invoice_interest");
         assert.equal(submission.source, "invoice_pipeline");
         assert.equal(submission.email, "finance@example.com");
+        assert.equal(submission.clientRef, "73969443-f5a7-4f35-a4be-18dc9127c685");
         assert.equal(submission.country, "HK");
         assert.equal(submission.company, "");
         assert.equal(submission.phone, "");
@@ -98,6 +100,8 @@ describe("invoice interest submissions", () => {
         ["invalid email", { email: "invalid" }, "Please enter a valid email address"],
         ["missing interest", { interest: undefined }, "Please choose an interest"],
         ["unknown interest", { interest: "__proto__" }, "Please choose an interest"],
+        ["missing browser reference", { client_ref: undefined }, "Browser reference is required"],
+        ["invalid browser reference", { client_ref: "not-a-uuid" }, "Browser reference is invalid"],
         [
             "missing verification",
             { cf_turnstile_token: undefined },

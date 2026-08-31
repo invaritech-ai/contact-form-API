@@ -103,13 +103,15 @@ industry, main_control_problem, message, submit_page_url, submit_page_path,
 submit_page_title, referrer, landing_page_url, landing_page_path, utm_source,
 utm_medium, utm_campaign, utm_term, utm_content, utm_id, utm_source_platform,
 utm_creative_format, utm_marketing_tactic, gclid, gbraid, wbraid, fbclid,
-msclkid, li_fat_id, turnstile_status, turnstile_hostname
+msclkid, li_fat_id, turnstile_status, turnstile_hostname, client_ref
 ```
 
 For the contact form, `form_type` and `source` are `contact`. Invoice-interest
 rows use `invoice_interest` and the selected interest code. `role`, `industry`, and
 `main_control_problem` belong to the resource form that shares this sheet and
 are written empty — they are kept so both forms stay column-aligned.
+`client_ref` is the final column. It is empty for the general contact form and
+contains the full browser UUID for invoice-interest rows.
 
 Rows are written with `valueInputOption=RAW`, so Sheets stores every value
 exactly as submitted instead of parsing it as though typed into the grid. That

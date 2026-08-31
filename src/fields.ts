@@ -43,6 +43,7 @@ export interface ContactSubmission {
     company: string;
     country: string;
     message: string;
+    clientRef: string;
     turnstileToken: string;
     attribution: Attribution;
 }
@@ -54,12 +55,14 @@ const LIMITS = {
     company: 200,
     country: 100,
     message: 5000,
+    clientRef: 36,
     token: 4096,
     attribution: 600,
 } as const;
 
 // Deliberately permissive: the authoritative check is whether mail is delivered.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // C0 and C1 control characters, written as escapes to keep this file printable.
 const CONTROL_CHARS = new RegExp("[\\u0000-\\u001f\\u007f-\\u009f]", "g");
@@ -110,6 +113,7 @@ export function parseSubmission(form: FormData): ParseResult {
             company,
             country,
             message,
+            clientRef: "",
             turnstileToken,
             attribution,
         },
@@ -132,6 +136,7 @@ const INTEREST_COPY: Record<InvoiceInterest, { name: string; message: string }> 
 export function parseInvoiceInterest(form: FormData, edgeCountry: string | null): ParseResult {
     const email = clean(form.get("email"), LIMITS.email);
     const interest = clean(form.get("interest"), 40) as InvoiceInterest;
+    const clientRef = clean(form.get("client_ref"), LIMITS.clientRef);
     const turnstileToken = clean(form.get("cf_turnstile_token"), LIMITS.token);
 
     if (!email) return { ok: false, error: "Email is required" };
@@ -140,6 +145,10 @@ export function parseInvoiceInterest(form: FormData, edgeCountry: string | null)
     }
     if (!Object.hasOwn(INTEREST_COPY, interest)) {
         return { ok: false, error: "Please choose an interest" };
+    }
+    if (!clientRef) return { ok: false, error: "Browser reference is required" };
+    if (!UUID_V4_RE.test(clientRef)) {
+        return { ok: false, error: "Browser reference is invalid" };
     }
     if (!turnstileToken) {
         return { ok: false, error: "Please complete the verification" };
@@ -162,6 +171,7 @@ export function parseInvoiceInterest(form: FormData, edgeCountry: string | null)
             company: "",
             country: clean(edgeCountry, LIMITS.country) || "Unknown",
             message: copy.message,
+            clientRef: clientRef.toLowerCase(),
             turnstileToken,
             attribution,
         },

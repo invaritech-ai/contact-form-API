@@ -32,6 +32,7 @@ export const COLUMNS = [
     ...ATTRIBUTION_FIELDS,
     "turnstile_status",
     "turnstile_hostname",
+    "client_ref",
 ] as const;
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -72,6 +73,7 @@ export function buildRow(
         ...submission.attribution,
         turnstile_status: turnstile.status,
         turnstile_hostname: turnstile.hostname,
+        client_ref: submission.clientRef,
     };
 
     return COLUMNS.map((column) => values[column] ?? "");

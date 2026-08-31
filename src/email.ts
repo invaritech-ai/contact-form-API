@@ -25,6 +25,10 @@ function row(label: string, value: string): string {
     )}</td></tr>`;
 }
 
+export function shortClientRef(clientRef: string): string {
+    return clientRef ? `${clientRef.slice(0, 5)}…${clientRef.slice(-4)}` : "";
+}
+
 export function buildEmailHtml(
     submission: ContactSubmission,
     turnstile: TurnstileResult,
@@ -36,6 +40,7 @@ export function buildEmailHtml(
         row("Phone", submission.phone),
         row("Country", submission.country),
         row("Message", submission.message),
+        row("Browser reference", shortClientRef(submission.clientRef)),
     ].join("");
 
     const attributionRows = ATTRIBUTION_FIELDS.map((field) =>
